@@ -7,7 +7,9 @@ EVIDENCE = load_evidence()
 BY_ID = {item.evidence_id: item for item in EVIDENCE}
 LOGS = [item for item in EVIDENCE if item.source_type == "log"]
 INCIDENT = load_incident("INC-001")
-GROUND_TRUTH = json.loads((DATA_DIR / "ground_truth" / "INC-001.json").read_text(encoding="utf-8"))
+GROUND_TRUTH = json.loads(
+    (DATA_DIR / "ground_truth" / "INC-001.json").read_text(encoding="utf-8")
+)
 
 
 def logs_for(correlation_id: str) -> list:
@@ -35,7 +37,10 @@ def test_log_882_matches_the_brief():
 
     assert item.source_name == "invoice-transformer"
     assert item.correlation_id == "CORR-2048"
-    assert item.content == "Payload validation failed: required field supplier_id is missing"
+    assert (
+        item.content
+        == "Payload validation failed: required field supplier_id is missing"
+    )
     assert item.metadata["exception_type"] == "SchemaValidationError"
 
 
@@ -65,8 +70,14 @@ def test_other_source_still_succeeds_during_the_incident():
 
 
 def test_received_fields_changed_after_the_deployment():
-    assert BY_ID["LOG-861"].metadata["received_fields"] == ["supplier_id", "total_amount"]
-    assert BY_ID["LOG-881"].metadata["received_fields"] == ["supplierId", "invoiceTotal"]
+    assert BY_ID["LOG-861"].metadata["received_fields"] == [
+        "supplier_id",
+        "total_amount",
+    ]
+    assert BY_ID["LOG-881"].metadata["received_fields"] == [
+        "supplierId",
+        "invoiceTotal",
+    ]
 
 
 def test_spec_requires_the_fields_missing_from_the_failed_payload():
@@ -86,10 +97,14 @@ def test_every_logged_service_is_in_the_dependency_map():
 def test_documents_are_marked_current():
     documents = ("SPEC-INVOICE-V3", "RB-SCHEMA-COMPAT", "HIST-INC-044")
 
-    assert all(BY_ID[document_id].metadata["is_current"] is True for document_id in documents)
+    assert all(
+        BY_ID[document_id].metadata["is_current"] is True for document_id in documents
+    )
 
 
 def test_incident_report_does_not_reveal_the_root_cause():
     description = INCIDENT["description"].lower()
 
-    assert not {"camelcase", "schema", "deploy", "mapping"} & set(description.replace(".", "").split())
+    assert not {"camelcase", "schema", "deploy", "mapping"} & set(
+        description.replace(".", "").split()
+    )

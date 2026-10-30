@@ -30,7 +30,10 @@ def test_accepts_the_inc_001_log_event():
 
     assert item.evidence_id == "LOG-882"
     assert item.timestamp == datetime(2026, 7, 15, 9, 43, 17, tzinfo=timezone.utc)
-    assert item.content == "Payload validation failed: required field supplier_id is missing"
+    assert (
+        item.content
+        == "Payload validation failed: required field supplier_id is missing"
+    )
     assert item.correlation_id == "CORR-2048"
     assert item.retrieval_score is None
 

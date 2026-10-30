@@ -84,7 +84,9 @@ def _load_dependency_maps(data_dir: Path) -> list[EvidenceItem]:
                 source_type="dependency_map",
                 source_name=record["system"],
                 title=f"{record['system']} dependency map",
-                content="\n".join(f"{edge['from']} -> {edge['to']}" for edge in record["edges"]),
+                content="\n".join(
+                    f"{edge['from']} -> {edge['to']}" for edge in record["edges"]
+                ),
                 metadata={"nodes": record["nodes"], "edges": record["edges"]},
             )
         )

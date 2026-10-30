@@ -503,9 +503,9 @@ MCP should provide controlled access to enterprise resources and tools. It shoul
 
 ```python
 search_logs(
-    service: str,
     start_time: datetime,
     end_time: datetime,
+    service: str | None,
     query: str | None,
     correlation_id: str | None
 )
