@@ -11,3 +11,4 @@
 - Added `observability-server` with the read-only `search_logs` tool.
 - Added `operations-server` with the read-only `get_deployments` tool.
 - Made `service` optional on both tools, so a search can cross services.
+- Added `knowledge-server` with the read-only `get_dependency_map` and `get_api_spec` tools.
