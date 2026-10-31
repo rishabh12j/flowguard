@@ -1041,8 +1041,8 @@ Each seeded incident should include:
 
 ### Milestone 0 — Repository foundation
 
-- [ ] Initialise Python project.
-- [ ] Add linting, formatting, type checking, and tests.
+- [x] Initialise Python project.
+- [x] Add linting, formatting, type checking, and tests.
 - [ ] Add `.env.example`.
 - [ ] Add Dockerfile and Compose skeleton.
 - [ ] Add health endpoint.
@@ -1055,8 +1055,8 @@ Each seeded incident should include:
 - [ ] Create five ground-truth incidents.
 - [ ] Create logs, runbooks, API specs, dependency maps, and deployments.
 - [ ] Create data schemas.
-- [ ] Add deterministic data loaders.
-- [ ] Add seed validation tests.
+- [x] Add deterministic data loaders.
+- [x] Add seed validation tests.
 
 **Exit condition:** Each incident can be solved manually from the available evidence.
 
@@ -1073,7 +1073,7 @@ Each seeded incident should include:
 ### Milestone 3 — RAG pipeline
 
 - [ ] Ingest runbooks, API specs, and historical incidents.
-- [ ] Add metadata-aware chunking.
+- [x] Add metadata-aware chunking.
 - [ ] Store embeddings in Qdrant.
 - [ ] Implement retrieval and relevance threshold.
 - [ ] Return source metadata.
@@ -1152,7 +1152,7 @@ The MVP is complete when:
 
 Work in this order:
 
-- [ ] Create the repository and Python package.
+- [x] Create the repository and Python package.
 - [ ] Implement domain models for incidents, evidence, hypotheses, and remediation.
 - [x] Build INC-001 and all supporting synthetic evidence.
 - [x] Write a deterministic Python script that solves INC-001 from the data.

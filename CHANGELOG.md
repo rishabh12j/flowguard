@@ -14,3 +14,4 @@
 - Added `knowledge-server` with the read-only `get_dependency_map` and `get_api_spec` tools.
 - Added tool policies and `ToolGuard` for allowlists, call limits, and unknown arguments.
 - Added `GuardedClient`, which applies those checks and a timeout to every tool call.
+- Added metadata-aware chunking for API specs, runbooks, and historical incidents.
