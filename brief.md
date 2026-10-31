@@ -1065,8 +1065,8 @@ Each seeded incident should include:
 - [ ] Implement observability MCP server.
 - [ ] Implement knowledge MCP server.
 - [ ] Implement operations MCP server.
-- [ ] Add scoped permissions and call limits.
-- [ ] Add MCP integration tests.
+- [x] Add scoped permissions and call limits.
+- [x] Add MCP integration tests.
 
 **Exit condition:** Typed MCP calls return evidence with stable IDs.
 

@@ -12,3 +12,5 @@
 - Added `operations-server` with the read-only `get_deployments` tool.
 - Made `service` optional on both tools, so a search can cross services.
 - Added `knowledge-server` with the read-only `get_dependency_map` and `get_api_spec` tools.
+- Added tool policies and `ToolGuard` for allowlists, call limits, and unknown arguments.
+- Added `GuardedClient`, which applies those checks and a timeout to every tool call.
