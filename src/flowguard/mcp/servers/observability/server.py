@@ -35,7 +35,7 @@ def matches_query(item: EvidenceItem, query: str) -> bool:
 def search_logs(
     start_time: AwareDatetime,
     end_time: AwareDatetime,
-    service: str | None = None,  # TODO: decision 1
+    service: str | None = None,
     query: str | None = None,
     correlation_id: str | None = None,
 ) -> LogSearchResult:

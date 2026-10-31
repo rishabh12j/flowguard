@@ -43,6 +43,7 @@ async def test_rejects_a_timestamp_without_a_timezone():
     )
 
     assert result.is_error is True
+    assert "timezone" in result.content[0].text
 
 
 async def test_tool_is_marked_read_only():
@@ -92,3 +93,10 @@ async def test_rejects_a_reversed_time_window():
     result = await search(start_time=WINDOW["end_time"], end_time=WINDOW["start_time"])
 
     assert result.is_error is True
+    assert "end_time" in result.content[0].text
+
+
+async def test_finds_failures_by_exception_type():
+    result = await search(**WINDOW, query="SchemaValidationError")
+
+    assert ids(result) == ["LOG-882", "LOG-886", "LOG-890"]

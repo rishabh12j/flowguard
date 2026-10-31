@@ -8,3 +8,6 @@
 - Added `flowguard.dataset` to load the dataset as `EvidenceItem` records.
 - Added seed validation tests for INC-001.
 - Added a temporary integration test that solves INC-001 without an LLM.
+- Added `observability-server` with the read-only `search_logs` tool.
+- Added `operations-server` with the read-only `get_deployments` tool.
+- Made `service` optional on both tools, so a search can cross services.

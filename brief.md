@@ -555,9 +555,9 @@ get_incident(
 )
 
 get_deployments(
-    service: str,
     start_time: datetime,
-    end_time: datetime
+    end_time: datetime,
+    service: str | None
 )
 ```
 
@@ -1156,7 +1156,7 @@ Work in this order:
 - [ ] Implement domain models for incidents, evidence, hypotheses, and remediation.
 - [x] Build INC-001 and all supporting synthetic evidence.
 - [x] Write a deterministic Python script that solves INC-001 from the data.
-- [ ] Expose the synthetic evidence through one MCP server.
+- [x] Expose the synthetic evidence through one MCP server.
 - [ ] Add RAG over the runbook, API specification, and historical incident.
 - [ ] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit.
 - [ ] Add FastAPI endpoints to start and inspect an investigation.
