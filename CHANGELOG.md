@@ -2,6 +2,11 @@
 
 ## 2026-11-03
 
+- Added the `Incident` model, which validates an investigation request.
+- Added the first LangGraph investigation graph: `intake` validates the request, and `runbook_retrieval` adds matching documents to the evidence.
+- An invalid request now stops the investigation before any search, with errors that name the field but never repeat the rejected value.
+- Added `langgraph` as a dependency.
+
 - Added `SentenceTransformerEmbedder`, using `BAAI/bge-small-en-v1.5`.
 - Added ingestion of API specs, runbooks, and historical incidents into Qdrant.
 - Ingestion now refuses a chunk longer than the model's token limit, instead of letting it be cut off silently.

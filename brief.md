@@ -1083,11 +1083,11 @@ Each seeded incident should include:
 
 ### Milestone 4 — LangGraph investigation workflow
 
-- [ ] Define typed graph state.
+- [x] Define typed graph state.
 - [ ] Implement intake and triage.
 - [ ] Implement log analysis.
 - [ ] Implement dependency tracing.
-- [ ] Implement runbook retrieval.
+- [x] Implement runbook retrieval.
 - [ ] Implement root-cause synthesis.
 - [ ] Implement graph retries and step limits.
 
