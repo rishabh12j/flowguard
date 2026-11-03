@@ -1072,9 +1072,9 @@ Each seeded incident should include:
 
 ### Milestone 3 — RAG pipeline
 
-- [ ] Ingest runbooks, API specs, and historical incidents.
+- [x] Ingest runbooks, API specs, and historical incidents.
 - [x] Add metadata-aware chunking.
-- [ ] Store embeddings in Qdrant.
+- [x] Store embeddings in Qdrant.
 - [ ] Implement retrieval and relevance threshold.
 - [ ] Return source metadata.
 - [ ] Build retrieval evaluation cases.

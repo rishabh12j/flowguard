@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03
+
+- Added `SentenceTransformerEmbedder`, using `BAAI/bge-small-en-v1.5`.
+- Added ingestion of API specs, runbooks, and historical incidents into Qdrant.
+- Ingestion now refuses a chunk longer than the model's token limit, instead of letting it be cut off silently.
+
 ## 2026-10-30
 
 - Added the Python package and test setup.
