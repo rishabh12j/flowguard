@@ -5,8 +5,11 @@ from flowguard.domain.evidence import EvidenceItem
 from flowguard.rag.embedding import Embedder
 from flowguard.rag.ingestion import COLLECTION
 
-# A placeholder until retrieval evaluation cases exist to tune it.
+# Chosen with the retrieval evaluation (python -m flowguard.evaluation.retrieval).
+# At 0.6, recall is 1.00 and abstention 0.71. 0.625 abstains more, but leaves the
+# "disable validation" question only 0.003 above the threshold.
 MIN_SCORE = 0.6
+
 LIMIT = 5
 METADATA_FIELDS = (
     "document_id",

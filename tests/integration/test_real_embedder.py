@@ -1,29 +1,11 @@
 import math
-
 import pytest
-from qdrant_client import QdrantClient
-
-
 from flowguard.dataset import load_evidence, load_incident
-
-from flowguard.rag.ingestion import COLLECTION, ingest, knowledge_chunks
+from flowguard.rag.ingestion import COLLECTION, knowledge_chunks
 from flowguard.rag.retrieval import retrieve
-from flowguard.rag.embedding import SentenceTransformerEmbedder
 
 
 CHUNKS = knowledge_chunks(load_evidence())
-
-
-@pytest.fixture(scope="module")
-def embedder():
-    return SentenceTransformerEmbedder()
-
-
-@pytest.fixture(scope="module")
-def client(embedder):
-    client = QdrantClient(":memory:")
-    ingest(CHUNKS, embedder, client)
-    return client
 
 
 def top_chunk(client, embedder, query):

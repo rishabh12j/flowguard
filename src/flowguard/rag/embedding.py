@@ -24,7 +24,10 @@ class SentenceTransformerEmbedder:
         if dimensions is None:
             raise ValueError(f"{model_name} does not report its dimensions")
         self.dimensions = dimensions
-        self.max_tokens = self._model.max_seq_length
+        max_tokens = self._model.max_seq_length
+        if max_tokens is None:
+            raise ValueError(f"{model_name} does not report its input limit")
+        self.max_tokens = max_tokens
 
     def count_tokens(self, text: str) -> int:
         return len(self._model.tokenizer(text, truncation=False)["input_ids"])

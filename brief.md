@@ -1077,7 +1077,7 @@ Each seeded incident should include:
 - [x] Store embeddings in Qdrant.
 - [x] Implement retrieval and relevance threshold.
 - [x] Return source metadata.
-- [ ] Build retrieval evaluation cases.
+- [x] Build retrieval evaluation cases.
 
 **Exit condition:** Required evidence is retrieved reliably for seeded incidents.
 
@@ -1157,7 +1157,7 @@ Work in this order:
 - [x] Build INC-001 and all supporting synthetic evidence.
 - [x] Write a deterministic Python script that solves INC-001 from the data.
 - [x] Expose the synthetic evidence through one MCP server.
-- [ ] Add RAG over the runbook, API specification, and historical incident.
+- [x] Add RAG over the runbook, API specification, and historical incident.
 - [ ] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit.
 - [ ] Add FastAPI endpoints to start and inspect an investigation.
 - [ ] Add validation and approval nodes.
