@@ -3,9 +3,13 @@ import math
 import pytest
 from qdrant_client import QdrantClient
 
-from flowguard.dataset import load_evidence
-from flowguard.rag.embedding import SentenceTransformerEmbedder
+
+from flowguard.dataset import load_evidence, load_incident
+
 from flowguard.rag.ingestion import COLLECTION, ingest, knowledge_chunks
+from flowguard.rag.retrieval import retrieve
+from flowguard.rag.embedding import SentenceTransformerEmbedder
+
 
 CHUNKS = knowledge_chunks(load_evidence())
 
@@ -71,3 +75,34 @@ def test_finds_the_past_incident_from_its_symptoms(client, embedder):
     )
 
     assert found.payload["document_id"] == "HIST-INC-044"
+
+
+def test_inc_001_retrieves_the_past_incident_and_the_runbook(client, embedder):
+    incident = load_incident("INC-001")
+
+    results = retrieve(
+        incident["description"],
+        embedder,
+        client,
+        system=incident["affected_system"],
+    )
+
+    documents = {item.metadata["document_id"] for item in results}
+    assert {"HIST-INC-044", "RB-SCHEMA-COMPAT"} <= documents
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["best recipe for chocolate cake", "pod restarted after running out of memory"],
+)
+def test_an_unrelated_question_finds_nothing(client, embedder, query):
+    assert retrieve(query, embedder, client, system="invoice-processing") == []
+
+
+def test_an_exact_match_does_not_score_above_one(client, embedder):
+    runbook = next(chunk for chunk in CHUNKS if chunk.document_id == "RB-SCHEMA-COMPAT")
+
+    item = retrieve(runbook.text, embedder, client, system="invoice-processing")[0]
+
+    assert item.retrieval_score == 1
+

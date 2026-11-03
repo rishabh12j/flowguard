@@ -1075,8 +1075,8 @@ Each seeded incident should include:
 - [x] Ingest runbooks, API specs, and historical incidents.
 - [x] Add metadata-aware chunking.
 - [x] Store embeddings in Qdrant.
-- [ ] Implement retrieval and relevance threshold.
-- [ ] Return source metadata.
+- [x] Implement retrieval and relevance threshold.
+- [x] Return source metadata.
 - [ ] Build retrieval evaluation cases.
 
 **Exit condition:** Required evidence is retrieved reliably for seeded incidents.
