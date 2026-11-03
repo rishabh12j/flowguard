@@ -87,4 +87,3 @@ def test_an_exact_match_does_not_score_above_one(client, embedder):
     item = retrieve(runbook.text, embedder, client, system="invoice-processing")[0]
 
     assert item.retrieval_score == 1
-
