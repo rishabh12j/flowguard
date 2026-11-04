@@ -1,5 +1,5 @@
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import Annotated, Protocol
@@ -10,6 +10,8 @@ from qdrant_client import QdrantClient
 from flowguard.config import Settings
 from flowguard.dataset import load_evidence
 from flowguard.domain.audit import InvestigationRecord
+from flowguard.graph.builder import InvestigationGraph, build_graph
+from flowguard.graph.checkpoints import open_checkpointer
 from flowguard.graph.context import AuditStore, EvidenceTools, Retriever
 from flowguard.llm.client import LLM, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
@@ -22,11 +24,14 @@ from flowguard.storage.audit_repository import SqliteAuditStore
 class AuditLog(AuditStore, Protocol):
     def get(self, investigation_id: str) -> InvestigationRecord | None: ...
 
+    def history(self, investigation_id: str) -> list[InvestigationRecord]: ...
+
 
 @dataclass(frozen=True)
 class Services:
     """What every request shares. Tools are not shared: each investigation opens its own."""
 
+    graph: InvestigationGraph
     retriever: Retriever
     llm: LLM
     audit: AuditLog
@@ -34,19 +39,22 @@ class Services:
     open_tools: Callable[[], AbstractAsyncContextManager[EvidenceTools]]
 
 
-def load_services(settings: Settings | None = None) -> Services:
+@asynccontextmanager
+async def open_services(settings: Settings | None = None) -> AsyncIterator[Services]:
     settings = settings or Settings.from_env()
     embedder = SentenceTransformerEmbedder()
     # Qdrant runs in memory until Docker Compose adds a server, so the documents
     # are indexed every time the API starts.
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(load_evidence()), embedder, client)
-    return Services(
-        retriever=partial(retrieve, embedder=embedder, client=client),
-        llm=OllamaLLM(),
-        audit=SqliteAuditStore(settings.audit_db),
-        open_tools=open_evidence_tools,
-    )
+    async with open_checkpointer(settings.checkpoint_db) as checkpointer:
+        yield Services(
+            graph=build_graph(checkpointer),
+            retriever=partial(retrieve, embedder=embedder, client=client),
+            llm=OllamaLLM(),
+            audit=SqliteAuditStore(settings.audit_db),
+            open_tools=open_evidence_tools,
+        )
 
 
 def get_services(request: Request) -> Services:

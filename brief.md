@@ -350,13 +350,15 @@ This node must be deterministic wherever possible.
 - Allow approve, reject, or request-more-evidence.
 - Never treat silence as approval.
 
+> **Built 2026-11-04:** a plan with a state-changing step is saved as `awaiting_approval`, then the graph pauses with LangGraph's `interrupt()`. The paused state lives in a SQLite checkpoint file, so it survives a restart. Only `POST /investigations/{id}/approve`, `/reject`, or `/request-more-evidence` resumes it, with a named approver; reject and request-more-evidence need a comment. Resuming without a decision pauses again, and nothing times out into approval. Approval records the decision without executing anything, as the MVP allows. Request-more-evidence ends the investigation as `more_evidence_requested`; the loop back into evidence gathering is built with graph retries and step limits. The approver's name isn't authenticated in the MVP.
+
 #### 10. `audit_node`
 
 - Persist the full investigation trace.
 - Store tool calls, tool results, evidence IDs, model outputs, validation results, and approvals.
 - Produce a user-readable incident report.
 
-> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Still missing: full tool results, raw model output, retrieval calls (not yet through MCP), validation results, approvals, and the readable report.
+> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Since then, each stage saves a new version instead: the plan and its rejected steps (2026-11-04), then the approval decision. Versions are append-only, and `(investigation_id, version)` is unique, so two decisions can't both be saved. Still missing: full tool results, raw model output, retrieval calls (not yet through MCP), and the readable report.
 
 ---
 
@@ -1105,9 +1107,9 @@ Each seeded incident should include:
 
 - [x] Implement remediation schema.
 - [x] Implement deterministic validation.
-- [ ] Implement human approval pause.
-- [ ] Implement approve, reject, and request-more-evidence routes.
-- [ ] Implement audit persistence.
+- [x] Implement human approval pause.
+- [x] Implement approve, reject, and request-more-evidence routes.
+- [x] Implement audit persistence.
 - [ ] Add adversarial safety tests.
 
 **Exit condition:** No disallowed action can bypass validation or approval.

@@ -2,7 +2,8 @@ import operator
 from datetime import datetime
 from typing import Annotated, Any, TypedDict
 
-from flowguard.domain.audit import InvestigationStatus
+from flowguard.domain.approval import ApprovalDecision
+from flowguard.domain.audit import InvestigationStatus, ToolCallRecord
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import IncidentCategory, RootCauseHypothesis
 from flowguard.domain.incidents import Incident
@@ -32,6 +33,10 @@ class InvestigationState(TypedDict, total=False):
     actions: tuple[PlannedAction, ...]
     rejected_actions: tuple[RejectedAction, ...]
     requires_approval: bool
+    decision: ApprovalDecision
+    # Kept by the audit node, so a resumed investigation continues its record.
+    audit_version: int
+    tool_calls: tuple[ToolCallRecord, ...]
 
     # These reducers join updates, so nodes running in parallel can all add to them.
     evidence: Annotated[tuple[EvidenceItem, ...], operator.add]

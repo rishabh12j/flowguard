@@ -2,10 +2,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fakes import FakeLLM
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+from pydantic import ValidationError
 
+from flowguard.domain.approval import ApprovalDecision
 from flowguard.domain.audit import ToolCallRecord
 from flowguard.domain.evidence import EvidenceItem
-from flowguard.graph.builder import GRAPH, investigate
+from flowguard.graph.builder import build_graph, decide, investigate
+from flowguard.graph.checkpoints import SERIALIZER, open_checkpointer
 from flowguard.graph.context import Dependencies, EvidenceUnavailable, Found
 from flowguard.llm.client import LLMError
 
@@ -193,9 +198,19 @@ def dependencies(retriever=None, tools=None, llm=None, audit=None) -> Dependenci
     )
 
 
-async def run(request=REQUEST, retriever=None, tools=None, llm=None, audit=None):
+def new_graph():
+    # Checkpoints in memory, written with the same serializer as the real file.
+    return build_graph(InMemorySaver(serde=SERIALIZER))
+
+
+async def run(
+    request=REQUEST, retriever=None, tools=None, llm=None, audit=None, graph=None
+):
     return await investigate(
-        request, dependencies(retriever, tools, llm, audit), investigation_id="INVEST-1"
+        graph or new_graph(),
+        request,
+        dependencies(retriever, tools, llm, audit),
+        investigation_id="INVEST-1",
     )
 
 
@@ -367,13 +382,14 @@ async def test_evidence_already_in_the_state_is_kept():
     earlier = document("NOTE-1")
     runbook = document("RB-SCHEMA-COMPAT#full-document")
 
-    state = await GRAPH.ainvoke(
+    state = await new_graph().ainvoke(
         {
             "investigation_id": "INVEST-1",
             "started_at": WINDOW_START,
             "request": REQUEST,
             "evidence": (earlier,),
         },
+        {"configurable": {"thread_id": "INVEST-1"}},
         context=dependencies(retriever=FakeRetriever(runbook), llm=FakeLLM()),
     )
 
@@ -580,8 +596,8 @@ async def test_an_audit_that_cannot_be_saved_fails_the_investigation():
 async def test_each_investigation_gets_a_new_id():
     audit = FakeAudit()
 
-    await investigate(REQUEST, dependencies(audit=audit))
-    await investigate(REQUEST, dependencies(audit=audit))
+    await investigate(new_graph(), REQUEST, dependencies(audit=audit))
+    await investigate(new_graph(), REQUEST, dependencies(audit=audit))
 
     first, second = (record.investigation_id for record in audit.records)
     assert first != second
@@ -703,3 +719,131 @@ async def test_the_plan_and_its_rejections_are_audited():
         "must come after a step that fixes the cause"
     )
     assert record.requires_approval is True
+
+
+THREAD = {"configurable": {"thread_id": "INVEST-1"}}
+
+
+def decision(choice="approve", comment=""):
+    return ApprovalDecision(
+        decision=choice,
+        approver="sam",
+        comment=comment,
+        decided_at=WINDOW_START + timedelta(hours=3),
+    )
+
+
+EARLIER_CALL = ToolCallRecord(
+    tool="search_logs", arguments={}, outcome="ok", items=1, seconds=0.01
+)
+
+
+async def paused(audit, graph=None):
+    graph = graph or new_graph()
+    tools = full_tools()
+    tools.history.append(EARLIER_CALL)
+    state = await run(
+        retriever=FakeRetriever(SPEC),
+        tools=tools,
+        llm=diagnosing_llm(),
+        audit=audit,
+        graph=graph,
+    )
+    return graph, state
+
+
+async def test_a_plan_needing_approval_pauses_the_investigation():
+    audit = FakeAudit()
+
+    graph, state = await paused(audit)
+
+    assert state["status"] == "awaiting_approval"
+    assert state["__interrupt__"][0].value == {"steps_needing_approval": [1, 2]}
+    [record] = audit.records
+    assert (record.version, record.status) == (1, "awaiting_approval")
+    assert (await graph.aget_state(THREAD)).next == ("approval",)
+
+
+async def test_a_plan_needing_no_approval_does_not_pause():
+    llm = diagnosing_llm(actions=[step("add_contract_test", "supplier-api")])
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert state["status"] == "diagnosed"
+    assert "__interrupt__" not in state
+
+
+async def test_an_approval_is_saved_as_a_new_version():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    state = await decide(graph, "INVEST-1", decision(), dependencies(audit=audit))
+
+    first, second = audit.records
+    assert (second.version, second.status) == (2, "approved")
+    assert second.decision == decision()
+    assert first.status == "awaiting_approval"
+    # The resuming request has new tools, but the calls made before the pause stay.
+    assert first.tool_calls == second.tool_calls == (EARLIER_CALL,)
+    assert "__interrupt__" not in state
+
+
+@pytest.mark.parametrize(
+    "choice, status",
+    [("reject", "declined"), ("request_more_evidence", "more_evidence_requested")],
+)
+async def test_a_refusal_ends_the_investigation(choice, status):
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    await decide(
+        graph,
+        "INVEST-1",
+        decision(choice, comment="Check with the supplier team first."),
+        dependencies(audit=audit),
+    )
+
+    assert [record.status for record in audit.records] == ["awaiting_approval", status]
+    assert (await graph.aget_state(THREAD)).next == ()
+
+
+async def test_resuming_without_a_decision_keeps_it_paused():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    state = await graph.ainvoke(None, THREAD, context=dependencies(audit=audit))
+
+    assert "__interrupt__" in state
+    assert [record.status for record in audit.records] == ["awaiting_approval"]
+
+
+async def test_a_malformed_decision_is_refused():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    with pytest.raises(ValidationError):
+        await graph.ainvoke(
+            Command(resume={"decision": "approve"}),
+            THREAD,
+            context=dependencies(audit=audit),
+        )
+
+    assert [record.status for record in audit.records] == ["awaiting_approval"]
+
+
+async def test_a_paused_investigation_survives_a_restart(tmp_path):
+    audit = FakeAudit()
+    path = tmp_path / "checkpoints.db"
+
+    async with open_checkpointer(path) as checkpointer:
+        await paused(audit, build_graph(checkpointer))
+    async with open_checkpointer(path) as checkpointer:
+        await decide(
+            build_graph(checkpointer), "INVEST-1", decision(), dependencies(audit=audit)
+        )
+
+    first, second = audit.records
+    assert second.status == "approved"
+    # Every model in the state came back as itself, not as a plain dict.
+    assert second.actions == first.actions
+    assert second.selected_hypothesis_id == "HYP-1"

@@ -41,6 +41,15 @@
 - An abstention proposes no actions. If the model can't propose a plan, the investigation keeps its diagnosis with an empty plan.
 - Real Gemma output changed one rule. Requiring every step to cite the root cause's evidence rejected a replay justified by the runbook and a contract test justified by HIST-INC-044. Runbooks and past incidents now count as grounds for a step.
 - With `gemma4:12b`, INC-001's plan is: update the field mapping, replay failed messages, add a contract test, notify the service owner. Nothing was rejected, and approval is required. Gemma targets the mapping fix at `supplier-api`, while the ground truth names the transformation mapping. The evaluation runner will measure that.
+- Added the human approval pause. A plan with a state-changing step is saved as `awaiting_approval`, and the graph stops in the new `approval` node until a person decides.
+- Paused investigations are kept in a SQLite checkpoint file (`FLOWGUARD_CHECKPOINT_DB`, default `flowguard-checkpoints.db`), so they survive an API restart. Loading a checkpoint rebuilds only FlowGuard's own state classes.
+- Added `POST /investigations/{id}/approve`, `/reject`, and `/request-more-evidence`, each with a named approver. Reject and request-more-evidence need a comment. Deciding an investigation that isn't paused answers 409.
+- The audit store now keeps every version of a record. `GET /investigations/{id}` returns the latest, and the new `GET /investigations/{id}/events` returns them all. Records saved before versions existed are moved in as version 1.
+- Two decisions can't both be saved: each version can be written only once, and the losing request gets 409.
+- The graph has no module-level instance any more. The app builds it at startup with its checkpointer.
+- Added `langgraph-checkpoint-sqlite` and `aiosqlite` as dependencies. Installing them upgraded `langgraph-checkpoint` to 4.3.1.
+- With `gemma4:12b`, INC-001 paused for approval, survived a server restart, and was approved, keeping all three tool calls. A second decision got 409.
+- Known gaps: approval records the decision but runs nothing, as the MVP allows. The approver's name isn't authenticated. Request-more-evidence ends the investigation instead of gathering more.
 
 ## 2026-11-03
 

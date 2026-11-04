@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from langgraph.runtime import Runtime
 
+from flowguard.domain.approval import Decision
 from flowguard.domain.audit import (
     InvestigationRecord,
     InvestigationStatus,
@@ -11,6 +12,25 @@ from flowguard.domain.audit import (
 from flowguard.graph.context import Dependencies
 from flowguard.graph.state import InvestigationState
 
+DECIDED: dict[Decision, InvestigationStatus] = {
+    "approve": "approved",
+    "reject": "declined",
+    "request_more_evidence": "more_evidence_requested",
+}
+
+
+def status_of(state: InvestigationState) -> InvestigationStatus:
+    decision = state.get("decision")
+    if "incident" not in state:
+        return "rejected"
+    if "selected_root_cause" not in state:
+        return "abstained"
+    if decision is not None:
+        return DECIDED[decision.decision]
+    if state.get("requires_approval", False):
+        return "awaiting_approval"
+    return "diagnosed"
+
 
 def build_record(
     state: InvestigationState,
@@ -18,17 +38,10 @@ def build_record(
     finished_at: datetime,
 ) -> InvestigationRecord:
     selected = state.get("selected_root_cause")
-    status: InvestigationStatus
-    if "incident" not in state:
-        status = "rejected"
-    elif selected is not None:
-        status = "diagnosed"
-    else:
-        status = "abstained"
-
     return InvestigationRecord(
         investigation_id=state["investigation_id"],
-        status=status,
+        version=state.get("audit_version", 0) + 1,
+        status=status_of(state),
         started_at=state["started_at"],
         finished_at=finished_at,
         incident=state.get("incident"),
@@ -42,6 +55,7 @@ def build_record(
         actions=state.get("actions", ()),
         rejected_actions=state.get("rejected_actions", ()),
         requires_approval=state.get("requires_approval", False),
+        decision=state.get("decision"),
     )
 
 
@@ -50,6 +64,13 @@ def build_record(
 def audit(
     state: InvestigationState, runtime: Runtime[Dependencies]
 ) -> InvestigationState:
-    record = build_record(state, runtime.context.tools.history, datetime.now(UTC))
+    # Calls made before a pause are in the state. The tools of the request that
+    # resumed the investigation only know their own calls.
+    tool_calls = (*state.get("tool_calls", ()), *runtime.context.tools.history)
+    record = build_record(state, tool_calls, datetime.now(UTC))
     runtime.context.audit.save(record)
-    return {"status": record.status}
+    return {
+        "status": record.status,
+        "audit_version": record.version,
+        "tool_calls": record.tool_calls,
+    }

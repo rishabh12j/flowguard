@@ -1,12 +1,15 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 import pytest
 from fakes import FakeLLM
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 
 from flowguard.api.app import create_app
 from flowguard.api.dependencies import Services
 from flowguard.domain.audit import ToolCallRecord
+from flowguard.graph.builder import build_graph
+from flowguard.graph.checkpoints import SERIALIZER
 from flowguard.graph.context import Found
 from flowguard.storage.audit_repository import SqliteAuditStore
 
@@ -61,12 +64,13 @@ class BrokenStore(SqliteAuditStore):
 
 def serve(store, toolbox=None, **options) -> TestClient:
     services = Services(
+        graph=build_graph(InMemorySaver(serde=SERIALIZER)),
         retriever=lambda query, *, system: [],
         llm=FakeLLM(),
         audit=store,
         open_tools=(toolbox or Toolbox()).open,
     )
-    return TestClient(create_app(load=lambda: services), **options)
+    return TestClient(create_app(lambda: nullcontext(services)), **options)
 
 
 @pytest.fixture
@@ -154,3 +158,45 @@ def test_an_audit_failure_is_an_error_that_reveals_nothing():
 
     assert response.status_code == 500
     assert "disk full" not in response.text
+
+
+def test_events_list_every_saved_version(api):
+    started = api.post("/investigations", json=REQUEST).json()
+
+    response = api.get(f"/investigations/{started['investigation_id']}/events")
+
+    assert response.status_code == 200
+    assert response.json() == [started]
+
+
+def test_events_of_an_unknown_investigation_are_not_found(api):
+    assert api.get("/investigations/INVEST-404/events").status_code == 404
+
+
+@pytest.mark.parametrize("route", ["approve", "reject", "request-more-evidence"])
+def test_only_a_paused_investigation_can_be_decided(api, store, route):
+    started = api.post("/investigations", json=REQUEST).json()
+
+    response = api.post(
+        f"/investigations/{started['investigation_id']}/{route}",
+        json={"approver": "sam", "comment": "Looks right."},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "the investigation is abstained, not awaiting approval"
+    }
+    assert len(store.history(started["investigation_id"])) == 1
+
+
+def test_deciding_an_unknown_investigation_is_not_found(api):
+    response = api.post("/investigations/INVEST-404/approve", json={"approver": "sam"})
+
+    assert response.status_code == 404
+
+
+def test_a_decision_needs_an_approver(api):
+    response = api.post("/investigations/INVEST-404/approve", json={})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": ["body.approver: Field required"]}

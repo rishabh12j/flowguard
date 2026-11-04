@@ -2,12 +2,25 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from flowguard.domain.approval import ApprovalDecision
 from flowguard.domain.hypotheses import IncidentCategory, RootCauseHypothesis
 from flowguard.domain.incidents import Incident
 from flowguard.domain.remediation import PlannedAction, RejectedAction
 
-InvestigationStatus = Literal["diagnosed", "abstained", "rejected"]
+InvestigationStatus = Literal[
+    "diagnosed",
+    "abstained",
+    "rejected",
+    "awaiting_approval",
+    "approved",
+    "declined",
+    "more_evidence_requested",
+]
 ToolOutcome = Literal["ok", "denied", "failed"]
+
+
+class DuplicateVersion(Exception):
+    """This version of the investigation's record was already saved."""
 
 
 class ToolCallRecord(BaseModel):
@@ -30,8 +43,11 @@ class InvestigationRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     investigation_id: str = Field(pattern=r"^\S+$")
+    # Each save adds a version. Earlier versions are never changed.
+    version: int = Field(default=1, ge=1)
     status: InvestigationStatus
     started_at: AwareDatetime
+    # When this version was saved.
     finished_at: AwareDatetime
     # The validated incident, never the raw request, which could hold anything.
     incident: Incident | None
@@ -46,3 +62,4 @@ class InvestigationRecord(BaseModel):
     actions: tuple[PlannedAction, ...] = ()
     rejected_actions: tuple[RejectedAction, ...] = ()
     requires_approval: bool = False
+    decision: ApprovalDecision | None = None

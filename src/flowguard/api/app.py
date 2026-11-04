@@ -1,11 +1,11 @@
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from flowguard.api.dependencies import Services, load_services
+from flowguard.api.dependencies import Services, open_services
 from flowguard.api.routes import health, investigations
 from flowguard.graph.nodes.intake import describe
 
@@ -19,13 +19,16 @@ async def invalid_request(request: Request, error: Exception) -> JSONResponse:
     )
 
 
-def create_app(load: Callable[[], Services] = load_services) -> FastAPI:
+def create_app(
+    services_from: Callable[[], AbstractAsyncContextManager[Services]] = open_services,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         # Loading the embedder and indexing documents takes seconds, so it happens
-        # once, when the API starts, not on every request.
-        application.state.services = load()
-        yield
+        # once, when the API starts. The checkpoint file closes when it stops.
+        async with services_from() as services:
+            application.state.services = services
+            yield
 
     app = FastAPI(title="FlowGuard", lifespan=lifespan)
     app.add_exception_handler(RequestValidationError, invalid_request)

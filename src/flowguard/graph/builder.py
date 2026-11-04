@@ -2,10 +2,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 
+from flowguard.domain.approval import ApprovalDecision
 from flowguard.graph.context import Dependencies
+from flowguard.graph.nodes.approval import approval
 from flowguard.graph.nodes.audit import audit
 from flowguard.graph.nodes.dependency_trace import dependency_trace
 from flowguard.graph.nodes.intake import intake
@@ -14,7 +18,7 @@ from flowguard.graph.nodes.remediation import remediation
 from flowguard.graph.nodes.retrieval import runbook_retrieval
 from flowguard.graph.nodes.root_cause import root_cause
 from flowguard.graph.nodes.validation import validation
-from flowguard.graph.routing import after_intake, after_root_cause
+from flowguard.graph.routing import after_audit, after_intake, after_root_cause
 from flowguard.graph.state import InvestigationState
 
 InvestigationGraph = CompiledStateGraph[
@@ -22,7 +26,8 @@ InvestigationGraph = CompiledStateGraph[
 ]
 
 
-def build_graph() -> InvestigationGraph:
+# The checkpointer is required: without one, the graph couldn't pause for approval.
+def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> InvestigationGraph:
     graph = StateGraph(InvestigationState, context_schema=Dependencies)
     graph.add_node("intake", intake)
     graph.add_node("log_analysis", log_analysis)
@@ -31,8 +36,8 @@ def build_graph() -> InvestigationGraph:
     graph.add_node("root_cause", root_cause)
     graph.add_node("remediation", remediation)
     graph.add_node("validation", validation)
-
     graph.add_node("audit", audit)
+    graph.add_node("approval", approval)
 
     graph.add_edge(START, "intake")
     graph.add_conditional_edges(
@@ -47,12 +52,11 @@ def build_graph() -> InvestigationGraph:
     )
     graph.add_edge("remediation", "validation")
     graph.add_edge("validation", "audit")
-    graph.add_edge("audit", END)
+    # A plan that needs approval is saved, waits for a decision, and is saved again.
+    graph.add_conditional_edges("audit", after_audit, ["approval", END])
+    graph.add_edge("approval", "audit")
 
-    return graph.compile()
-
-
-GRAPH = build_graph()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def new_investigation_id() -> str:
@@ -60,17 +64,34 @@ def new_investigation_id() -> str:
 
 
 async def investigate(
+    graph: InvestigationGraph,
     request: dict[str, Any],
     dependencies: Dependencies,
     *,
     investigation_id: str | None = None,
 ) -> dict[str, Any]:
-    # The only entry point, so no caller can forget the dependencies.
-    return await GRAPH.ainvoke(
+    investigation_id = investigation_id or new_investigation_id()
+    return await graph.ainvoke(
         {
-            "investigation_id": investigation_id or new_investigation_id(),
+            "investigation_id": investigation_id,
             "started_at": datetime.now(UTC),
             "request": request,
         },
+        # The checkpointer keeps each investigation's state under its own ID.
+        {"configurable": {"thread_id": investigation_id}},
+        context=dependencies,
+    )
+
+
+async def decide(
+    graph: InvestigationGraph,
+    investigation_id: str,
+    decision: ApprovalDecision,
+    dependencies: Dependencies,
+) -> dict[str, Any]:
+    # Resumes the paused approval node, which receives the decision.
+    return await graph.ainvoke(
+        Command(resume=decision),
+        {"configurable": {"thread_id": investigation_id}},
         context=dependencies,
     )

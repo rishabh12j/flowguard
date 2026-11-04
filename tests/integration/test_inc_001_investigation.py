@@ -1,14 +1,18 @@
 import json
+from contextlib import nullcontext
 from functools import partial
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 
 from flowguard.api.app import create_app
 from flowguard.api.dependencies import Services
-from flowguard.config import AUDIT_DB_VARIABLE
+from flowguard.config import AUDIT_DB_VARIABLE, CHECKPOINT_DB_VARIABLE
 from flowguard.dataset import load_incident
-from flowguard.graph.builder import investigate
+from flowguard.domain.audit import DuplicateVersion
+from flowguard.graph.builder import build_graph, investigate
+from flowguard.graph.checkpoints import SERIALIZER
 from flowguard.graph.context import Dependencies
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.rag.retrieval import retrieve
@@ -71,7 +75,11 @@ async def state(client, embedder, store):
         dependencies = Dependencies(
             retriever=retriever, tools=tools, llm=ScriptedLLM(), audit=store
         )
-        return await investigate(load_incident("INC-001"), dependencies)
+        return await investigate(
+            build_graph(InMemorySaver(serde=SERIALIZER)),
+            load_incident("INC-001"),
+            dependencies,
+        )
 
 
 def evidence_ids(state) -> set[str]:
@@ -127,7 +135,7 @@ async def test_inc_001_gets_the_runbook_s_plan(state):
 async def test_inc_001_is_saved_with_every_tool_call(state, store):
     record = store.get(state["investigation_id"])
 
-    assert record.status == "diagnosed"
+    assert record.status == "awaiting_approval"
     assert [(call.tool, call.outcome) for call in record.tool_calls] == [
         ("search_logs", "ok"),
         ("get_deployments", "ok"),
@@ -136,20 +144,25 @@ async def test_inc_001_is_saved_with_every_tool_call(state, store):
     assert "LOG-882" in record.evidence_ids
 
 
-def test_inc_001_is_diagnosed_through_the_api(client, embedder):
-    services = Services(
+def services_for(client, embedder, store=None) -> Services:
+    return Services(
+        graph=build_graph(InMemorySaver(serde=SERIALIZER)),
         retriever=partial(retrieve, embedder=embedder, client=client),
         llm=ScriptedLLM(),
-        audit=SqliteAuditStore(),
+        audit=store or SqliteAuditStore(),
         open_tools=open_evidence_tools,
     )
 
-    with TestClient(create_app(load=lambda: services)) as api:
+
+def test_inc_001_is_diagnosed_through_the_api(client, embedder):
+    services = services_for(client, embedder)
+
+    with TestClient(create_app(lambda: nullcontext(services))) as api:
         first = api.post("/investigations", json=load_incident("INC-001"))
         second = api.post("/investigations", json=load_incident("INC-001"))
 
     assert first.status_code == 201
-    assert first.json()["status"] == "diagnosed"
+    assert first.json()["status"] == "awaiting_approval"
     assert first.json()["category"] == "schema_contract_mismatch"
 
     # Each investigation has its own tool guard and history.
@@ -163,9 +176,94 @@ def test_inc_001_is_diagnosed_through_the_api(client, embedder):
 
 def test_the_api_starts_with_the_real_services(monkeypatch, tmp_path):
     monkeypatch.setenv(AUDIT_DB_VARIABLE, str(tmp_path / "audit.db"))
+    monkeypatch.setenv(CHECKPOINT_DB_VARIABLE, str(tmp_path / "checkpoints.db"))
 
     with TestClient(create_app()) as api:
         response = api.get("/health")
 
     assert response.status_code == 200
     assert (tmp_path / "audit.db").exists()
+    assert (tmp_path / "checkpoints.db").exists()
+
+
+@pytest.fixture
+def paused_api(client, embedder):
+    with TestClient(
+        create_app(lambda: nullcontext(services_for(client, embedder)))
+    ) as api:
+        started = api.post("/investigations", json=load_incident("INC-001")).json()
+        yield api, f"/investigations/{started['investigation_id']}"
+
+
+def test_an_approval_through_the_api_is_recorded(paused_api):
+    api, path = paused_api
+
+    response = api.post(f"{path}/approve", json={"approver": "sam"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    assert response.json()["decision"]["approver"] == "sam"
+    events = api.get(f"{path}/events").json()
+    assert [(event["version"], event["status"]) for event in events] == [
+        (1, "awaiting_approval"),
+        (2, "approved"),
+    ]
+
+
+def test_an_investigation_cannot_be_decided_twice(paused_api):
+    api, path = paused_api
+    api.post(f"{path}/approve", json={"approver": "sam"})
+
+    response = api.post(f"{path}/reject", json={"approver": "alex", "comment": "No."})
+
+    assert response.status_code == 409
+    assert api.get(path).json()["status"] == "approved"
+
+
+def test_a_rejection_needs_a_comment(paused_api):
+    api, path = paused_api
+
+    response = api.post(f"{path}/reject", json={"approver": "sam"})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": ["request: Value error, reject needs a comment saying why"]
+    }
+    assert api.get(path).json()["status"] == "awaiting_approval"
+
+
+def test_a_request_for_more_evidence_is_recorded(paused_api):
+    api, path = paused_api
+
+    response = api.post(
+        f"{path}/request-more-evidence",
+        json={"approver": "sam", "comment": "Check the ERP connector's logs too."},
+    )
+
+    assert response.json()["status"] == "more_evidence_requested"
+    assert response.json()["decision"]["comment"] == (
+        "Check the ERP connector's logs too."
+    )
+
+
+class RacedStore(SqliteAuditStore):
+    """Behaves as if another decision saved version 2 a moment earlier."""
+
+    def save(self, record) -> None:
+        if record.version == 2:
+            raise DuplicateVersion(
+                f"{record.investigation_id} version 2 is already saved"
+            )
+        super().save(record)
+
+
+def test_a_decision_that_loses_a_race_is_a_conflict(client, embedder):
+    services = services_for(client, embedder, RacedStore())
+
+    with TestClient(create_app(lambda: nullcontext(services))) as api:
+        started = api.post("/investigations", json=load_incident("INC-001")).json()
+        path = f"/investigations/{started['investigation_id']}"
+        response = api.post(f"{path}/approve", json={"approver": "sam"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "another decision was recorded first"}
