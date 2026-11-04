@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-04
+
+- Chose a local `gemma4:12b` model through Ollama as the LLM, after measuring it against `gemma4:e4b` on INC-001.
+- Added a provider-neutral `LLM` adapter with an Ollama implementation. All model failures become `LLMError`.
+- Added `propose_hypotheses`, which asks the model for up to three root-cause hypotheses. A schema limits citations to the evidence provided, and code checks them again.
+- The model can't set a hypothesis's confidence. Code will score it with the brief's rubric.
+- Tests that call the real model are marked `llm` and only run with `pytest -m llm`.
+
 ## 2026-11-03
 
 - Added the `Incident` model, which validates an investigation request.

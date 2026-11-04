@@ -1252,7 +1252,7 @@ Do not use placeholder numbers on a public CV or portfolio.
 
 Resolve these only when they become necessary:
 
-- [ ] Which LLM provider should be used for the public demo?
+- [x] Which LLM provider should be used for the public demo? **Decided 2026-11-03:** a local `gemma4:12b` model through Ollama, with thinking off, behind the provider-neutral adapter. On INC-001, it gave valid JSON, cited only real evidence, and found the root cause in 3 of 3 runs, at about 50 seconds per call on an 8 GB laptop GPU. `gemma4:e4b` was rejected: it copied HIST-INC-044's root cause instead of diagnosing INC-001. Thinking was rejected for being six times slower and less reliable. Three runs on one incident are enough to choose a model, not to claim accuracy.
 - [ ] Should Qdrant remain the long-term vector store?
 - [ ] Should audit storage move from SQLite to PostgreSQL?
 - [ ] Should the UI be Streamlit, React, or omitted?
