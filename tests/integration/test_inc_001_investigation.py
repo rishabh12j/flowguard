@@ -2,7 +2,11 @@ import json
 from functools import partial
 
 import pytest
+from fastapi.testclient import TestClient
 
+from flowguard.api.app import create_app
+from flowguard.api.dependencies import Services
+from flowguard.config import AUDIT_DB_VARIABLE
 from flowguard.dataset import load_incident
 from flowguard.graph.builder import investigate
 from flowguard.graph.context import Dependencies
@@ -97,3 +101,38 @@ async def test_inc_001_is_saved_with_every_tool_call(state, store):
         ("get_dependency_map", "ok"),
     ]
     assert "LOG-882" in record.evidence_ids
+
+
+def test_inc_001_is_diagnosed_through_the_api(client, embedder):
+    services = Services(
+        retriever=partial(retrieve, embedder=embedder, client=client),
+        llm=ScriptedLLM(),
+        audit=SqliteAuditStore(),
+        open_tools=open_evidence_tools,
+    )
+
+    with TestClient(create_app(load=lambda: services)) as api:
+        first = api.post("/investigations", json=load_incident("INC-001"))
+        second = api.post("/investigations", json=load_incident("INC-001"))
+
+    assert first.status_code == 201
+    assert first.json()["status"] == "diagnosed"
+    assert first.json()["category"] == "schema_contract_mismatch"
+
+    # Each investigation has its own tool guard and history.
+    def calls(response):
+        return [
+            (call["tool"], call["outcome"]) for call in response.json()["tool_calls"]
+        ]
+
+    assert calls(second) == calls(first)
+
+
+def test_the_api_starts_with_the_real_services(monkeypatch, tmp_path):
+    monkeypatch.setenv(AUDIT_DB_VARIABLE, str(tmp_path / "audit.db"))
+
+    with TestClient(create_app()) as api:
+        response = api.get("/health")
+
+    assert response.status_code == 200
+    assert (tmp_path / "audit.db").exists()

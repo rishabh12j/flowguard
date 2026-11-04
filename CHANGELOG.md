@@ -26,6 +26,15 @@
 - Records can only be added. Saving the same investigation twice fails instead of overwriting it.
 - If the record can't be saved, the investigation fails instead of returning an unaudited result.
 - Not yet audited: runbook retrieval (it doesn't go through MCP yet), full tool results, raw model output, and approvals.
+- Added a FastAPI app with `GET /health`, `POST /investigations`, and `GET /investigations/{investigation_id}`. Run it with `uvicorn flowguard.api.app:app`.
+- `POST /investigations` waits for the investigation, then answers 201 with the saved audit record and a `Location` header, or 422 with the record of a rejected request. This replaces the brief's two-step incident routes; the reasons are recorded in section 19.
+- The request body is checked by the graph, not by FastAPI, so every rejected request is audited. No error response repeats the rejected input.
+- The embedder, document index, model client, and audit store are loaded once at startup. Each investigation opens its own MCP tools, so call limits and tool history are never shared.
+- `FLOWGUARD_AUDIT_DB` sets the audit database file, which defaults to `flowguard-audit.db`.
+- The audit store now takes a lock, because requests share its SQLite connection across threads.
+- Added `fastapi` and `uvicorn` as dependencies.
+- Diagnosed INC-001 through the API with `gemma4:12b`: 201 in 23–50 seconds, `schema_contract_mismatch`, confidence 0.90.
+- Known gap: when the model is unavailable, the investigation abstains with a 201 like any other abstention. A client can only tell the difference from the `abstention` text.
 
 ## 2026-11-03
 

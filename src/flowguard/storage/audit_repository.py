@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from pathlib import Path
 
 from flowguard.domain.audit import InvestigationRecord
@@ -21,12 +22,16 @@ class SqliteAuditStore:
     def __init__(self, path: str | Path = ":memory:") -> None:
         # The audit node runs in a worker thread, not the thread that opened this.
         self._connection = sqlite3.connect(path, check_same_thread=False)
+        # Requests run in several threads at once, and they share this one
+        # connection. A rollback in one thread would undo another thread's
+        # unsaved insert, so only one thread uses the connection at a time.
+        self._lock = threading.Lock()
         with self._connection:
             self._connection.execute(SCHEMA)
 
     def save(self, record: InvestigationRecord) -> None:
         # A plain INSERT, so saving the same investigation twice fails.
-        with self._connection:
+        with self._lock, self._connection:
             self._connection.execute(
                 "INSERT INTO investigations VALUES (?, ?, ?, ?, ?, ?)",
                 (
@@ -40,8 +45,9 @@ class SqliteAuditStore:
             )
 
     def get(self, investigation_id: str) -> InvestigationRecord | None:
-        row = self._connection.execute(
-            "SELECT record FROM investigations WHERE investigation_id = ?",
-            (investigation_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT record FROM investigations WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
         return InvestigationRecord.model_validate_json(row[0]) if row else None

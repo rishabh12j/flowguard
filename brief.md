@@ -704,6 +704,8 @@ Every chunk should include:
 
 ## 19. FastAPI contract
 
+> **Decided 2026-11-04:** investigations start with one call, `POST /investigations`, whose body is the incident. The two-step `POST /incidents` then `POST /incidents/{incident_id}/investigate` needs an incidents table and adds nothing until re-investigating a stored incident is needed; add it then. `POST` waits for the result (about 25–60 seconds with Gemma) and answers 201 with the audit record, or 422 with the record of a rejected request. Making it asynchronous belongs with the approval pause in Milestone 5, which needs a LangGraph checkpointer anyway. The response is the audit record, not the example response below, which needs remediation and approval first.
+
 ### Endpoints
 
 ```
@@ -1049,7 +1051,7 @@ Each seeded incident should include:
 - [x] Add linting, formatting, type checking, and tests.
 - [ ] Add `.env.example`.
 - [ ] Add Dockerfile and Compose skeleton.
-- [ ] Add health endpoint.
+- [x] Add health endpoint.
 - [ ] Add CI workflow.
 
 **Exit condition:** API starts locally and tests run.
@@ -1163,7 +1165,7 @@ Work in this order:
 - [x] Expose the synthetic evidence through one MCP server.
 - [x] Add RAG over the runbook, API specification, and historical incident.
 - [x] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit. Triage became a category on each hypothesis; see section 10.
-- [ ] Add FastAPI endpoints to start and inspect an investigation.
+- [x] Add FastAPI endpoints to start and inspect an investigation.
 - [ ] Add validation and approval nodes.
 - [ ] Expand from one incident to five and build the evaluation runner.
 

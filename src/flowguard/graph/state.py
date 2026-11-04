@@ -10,7 +10,6 @@ from flowguard.domain.incidents import Incident
 
 class InvestigationState(TypedDict, total=False):
     # Every key is optional because a node returns only the keys it changes.
-
     investigation_id: str
     started_at: datetime
     request: dict[str, Any]
@@ -23,8 +22,8 @@ class InvestigationState(TypedDict, total=False):
 
     # Why no root cause was selected. Abstaining is a result, not an error.
     abstention: str
+    status: InvestigationStatus
 
     # These reducers join updates, so nodes running in parallel can all add to them.
     evidence: Annotated[tuple[EvidenceItem, ...], operator.add]
     errors: Annotated[tuple[str, ...], operator.add]
-    status: InvestigationStatus

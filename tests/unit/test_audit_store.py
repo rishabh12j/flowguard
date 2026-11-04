@@ -74,3 +74,17 @@ def test_can_save_from_another_thread():
 
     assert failures == []
     assert store.get("INVEST-2") is not None
+
+
+def test_threads_take_turns_with_the_connection():
+    store = SqliteAuditStore()
+
+    with store._lock:
+        thread = threading.Thread(target=store.save, args=(record(),))
+        thread.start()
+        thread.join(timeout=0.2)
+        # The save waits while another thread is using the connection.
+        assert thread.is_alive()
+    thread.join()
+
+    assert store.get("INVEST-1") is not None
