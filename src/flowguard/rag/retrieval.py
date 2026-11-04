@@ -2,6 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.redaction import redact_evidence
 from flowguard.rag.embedding import Embedder
 from flowguard.rag.ingestion import COLLECTION
 
@@ -41,14 +42,17 @@ def to_evidence(point: ScoredPoint) -> EvidenceItem:
     if point.payload is None:
         raise ValueError(f"point {point.id} has no payload")
     payload = point.payload
-    return EvidenceItem(
-        evidence_id=payload["chunk_id"],
-        source_type=payload["document_type"],
-        source_name=payload["service"],
-        title=payload["title"],
-        content=payload["text"],
-        metadata={field: payload[field] for field in METADATA_FIELDS},
-        retrieval_score=to_score(point.score),
+    # A document can quote a credential, so it is redacted before it leaves the store.
+    return redact_evidence(
+        EvidenceItem(
+            evidence_id=payload["chunk_id"],
+            source_type=payload["document_type"],
+            source_name=payload["service"],
+            title=payload["title"],
+            content=payload["text"],
+            metadata={field: payload[field] for field in METADATA_FIELDS},
+            retrieval_score=to_score(point.score),
+        )
     )
 
 

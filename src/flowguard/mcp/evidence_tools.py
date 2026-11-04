@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from flowguard.domain.audit import ToolCallRecord, ToolOutcome
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.redaction import redact_evidence
 from flowguard.graph.context import EvidenceUnavailable, Found
 from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import ToolDenied, ToolGuard
@@ -81,10 +82,11 @@ class McpEvidenceTools:
             record("failed", message)
             raise EvidenceUnavailable(f"{name} failed: {message}")
 
-        # The result crossed a process boundary, so it is validated like any input.
+        # The result crossed a process boundary, so it is validated like any input,
+        # and credentials are removed before anything else can see them.
         try:
             items = [
-                EvidenceItem.model_validate(item)
+                redact_evidence(EvidenceItem.model_validate(item))
                 for item in result.structured_content["items"]
             ]
         except (KeyError, ValidationError) as error:

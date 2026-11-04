@@ -42,3 +42,9 @@ def test_only_known_decisions_are_accepted():
 def test_the_time_must_have_a_timezone():
     with pytest.raises(ValidationError):
         decision(decided_at=datetime(2026, 7, 15, 12))
+
+
+def test_a_credential_in_the_comment_is_redacted():
+    approved = decision(comment="Tested with api_key=sk-live-1 on staging.")
+
+    assert approved.comment == "Tested with api_key=[REDACTED] on staging."

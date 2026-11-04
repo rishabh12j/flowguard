@@ -1,3 +1,4 @@
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -35,6 +36,15 @@ SYSTEM += "\n\nCategories:\n" + "\n".join(
 )
 
 
+# Text in the evidence could close the fence early, so that what follows it reads
+# as instructions. Every fence tag inside the data is replaced.
+FENCE_TAG = re.compile(r"<\s*/?\s*evidence\s*>", re.IGNORECASE)
+
+
+def unfenced(text: str) -> str:
+    return FENCE_TAG.sub("[evidence tag removed]", text)
+
+
 class InvalidProposal(Exception):
     """The model's answer broke the rules, so it cannot be used."""
 
@@ -53,7 +63,7 @@ def format_evidence(item: EvidenceItem) -> str:
     return (
         f"ID: {item.evidence_id}\n"
         f"Type: {item.source_type} | Source: {item.source_name} | Time: {when}\n"
-        f"{item.title}\n{item.content}"
+        f"{unfenced(item.title)}\n{unfenced(item.content)}"
     )
 
 
@@ -62,7 +72,7 @@ def build_prompt(incident: Incident, evidence: Sequence[EvidenceItem]) -> str:
     return (
         f"Incident {incident.incident_id} in {incident.affected_system}, reported "
         f"between {incident.start_time.isoformat()} and {incident.end_time.isoformat()}:\n"
-        f"{incident.description}\n\n<evidence>\n{items}\n</evidence>"
+        f"{unfenced(incident.description)}\n\n<evidence>\n{items}\n</evidence>"
     )
 
 

@@ -112,3 +112,17 @@ async def test_a_denied_call_is_recorded():
     [call] = tools.history
     assert call.outcome == "denied"
     assert call.detail == "get_dependency_map has reached its call limit"
+
+
+async def test_credentials_are_removed_on_arrival():
+    leaky = {
+        **LOG,
+        "content": "retrying with password=hunter2",
+        "metadata": {"level": "ERROR", "api_token": "tok-123"},
+    }
+    tools = tools_returning(structured_content={"items": [leaky], "truncated": False})
+
+    [item] = (await tools.search_logs(START, END)).items
+
+    assert item.content == "retrying with password=[REDACTED]"
+    assert item.metadata["api_token"] == "[REDACTED]"

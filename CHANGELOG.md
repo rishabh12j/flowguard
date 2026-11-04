@@ -50,6 +50,12 @@
 - Added `langgraph-checkpoint-sqlite` and `aiosqlite` as dependencies. Installing them upgraded `langgraph-checkpoint` to 4.3.1.
 - With `gemma4:12b`, INC-001 paused for approval, survived a server restart, and was approved, keeping all three tool calls. A second decision got 409.
 - Known gaps: approval records the decision but runs nothing, as the MVP allows. The approver's name isn't authenticated. Request-more-evidence ends the investigation instead of gathering more.
+- Added credential redaction (`domain/redaction.py`) for passwords, API keys, tokens, bearer headers, JWTs, AWS keys, private keys, and credentials in URLs. Ordinary text such as "token expired" is left alone.
+- Redaction is applied wherever outside text enters an investigation: MCP tool results, retrieved documents, the incident description, approval comments, and the whole request before it enters the graph.
+- Fixed a leak found by the new safety tests: the raw request was kept in the graph state, so a credential in it was saved in every checkpoint, including the one written before the first node runs.
+- Fixed a prompt weakness: evidence containing `</evidence>` could close the evidence fence early, so injected text after it would read as instructions. Fence tags inside data are now replaced.
+- Added `tests/unit/test_safety.py`, covering every threat in the brief's safety list. Most tests use a compromised model that obeys injected text, and show that the catalogue, validation, scoring, and approval still hold.
+- A test checks that the seeded data contains nothing that looks like a credential, so redaction never changes what Gemma sees for INC-001.
 
 ## 2026-11-03
 

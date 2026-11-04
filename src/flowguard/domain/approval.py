@@ -1,6 +1,15 @@
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from flowguard.domain.redaction import redact
 
 Decision = Literal["approve", "reject", "request_more_evidence"]
 
@@ -14,6 +23,13 @@ class ApprovalDecision(BaseModel):
     approver: str = Field(min_length=1, max_length=100)
     comment: str = Field(default="", max_length=2000)
     decided_at: AwareDatetime
+
+    # The comment is kept in every later audit version, so a pasted credential
+    # is removed first.
+    @field_validator("comment")
+    @classmethod
+    def without_credentials(cls, comment: str) -> str:
+        return redact(comment)
 
     @model_validator(mode="after")
     def a_refusal_says_why(self) -> "ApprovalDecision":

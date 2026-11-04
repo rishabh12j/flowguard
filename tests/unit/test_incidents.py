@@ -65,3 +65,11 @@ def test_cannot_be_changed_after_creation():
 
     with pytest.raises(ValidationError):
         incident.affected_system = "payroll"
+
+
+def test_a_credential_in_the_description_is_redacted():
+    incident = Incident.model_validate(
+        with_changes(description="Calls fail with Bearer abc.def.ghi since 09:40")
+    )
+
+    assert incident.description == "Calls fail with Bearer [REDACTED] since 09:40"

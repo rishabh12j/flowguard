@@ -1,4 +1,13 @@
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from flowguard.domain.redaction import redact
 
 
 class Incident(BaseModel):
@@ -9,6 +18,13 @@ class Incident(BaseModel):
     affected_system: str = Field(pattern=r"^\S+$")
     start_time: AwareDatetime
     end_time: AwareDatetime
+
+    # A reporter may paste a log line with a credential in it. It would otherwise
+    # reach the model, the checkpoint, and the audit record.
+    @field_validator("description")
+    @classmethod
+    def without_credentials(cls, description: str) -> str:
+        return redact(description)
 
     @model_validator(mode="after")
     def window_is_in_order(self) -> "Incident":

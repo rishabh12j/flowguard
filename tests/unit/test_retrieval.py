@@ -140,3 +140,20 @@ def test_rejects_a_blank_system(client, embedder):
 )
 def test_to_score_keeps_the_meaning_and_stays_in_range(cosine, expected):
     assert to_score(cosine) == expected
+
+
+def test_a_document_quoting_a_credential_is_redacted(embedder):
+    leaky = RUNBOOK.model_copy(
+        update={
+            "chunk_id": "RB-LEAKY#full-document",
+            "text": "Connect with postgres://svc:S3cret@db.internal/invoices first.",
+        }
+    )
+    client = QdrantClient(":memory:")
+    ingest([leaky], embedder, client)
+
+    [item] = retrieve(leaky.text, embedder, client, system=SYSTEM)
+
+    assert item.content == (
+        "Connect with postgres://svc:[REDACTED]@db.internal/invoices first."
+    )

@@ -704,6 +704,8 @@ Every chunk should include:
 - Require explicit approval for state-changing actions.
 - Provide an abstention path.
 
+> **Built 2026-11-04:** credentials are redacted wherever outside text enters an investigation: MCP tool results, retrieved documents, the request before it reaches the graph (and so every checkpoint), the incident description, and approval comments. Redaction looks for passwords, API keys, tokens, bearer headers, JWTs, AWS keys, private keys, and credentials in URLs. Any fence tag inside evidence is replaced, so data can't close the `<evidence>` fence early. `tests/unit/test_safety.py` covers every threat in section 23's safety list, mostly with a compromised model that obeys injected text. Not yet built: step limits (Milestone 4) and evaluation-run unsafe-action and approval-bypass rates (Milestone 7).
+
 ---
 
 ## 19. FastAPI contract
@@ -1110,7 +1112,7 @@ Each seeded incident should include:
 - [x] Implement human approval pause.
 - [x] Implement approve, reject, and request-more-evidence routes.
 - [x] Implement audit persistence.
-- [ ] Add adversarial safety tests.
+- [x] Add adversarial safety tests.
 
 **Exit condition:** No disallowed action can bypass validation or approval.
 
@@ -1147,9 +1149,9 @@ The MVP is complete when:
 - [ ] Evidence is accessed through MCP tools.
 - [ ] LangGraph controls a stateful investigation workflow.
 - [ ] RAG retrieves runbooks, API specifications, and historical incidents.
-- [ ] Important conclusions cite evidence IDs.
-- [ ] Unsupported conclusions are rejected or marked uncertain.
-- [ ] State-changing proposals require explicit approval.
+- [x] Important conclusions cite evidence IDs.
+- [x] Unsupported conclusions are rejected or marked uncertain.
+- [x] State-changing proposals require explicit approval.
 - [ ] Every tool call and decision is audited.
 - [ ] The complete stack runs through Docker Compose.
 - [ ] Evaluation metrics are generated automatically.

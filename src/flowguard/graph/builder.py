@@ -8,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from flowguard.domain.approval import ApprovalDecision
+from flowguard.domain.redaction import redact_value
 from flowguard.graph.context import Dependencies
 from flowguard.graph.nodes.approval import approval
 from flowguard.graph.nodes.audit import audit
@@ -75,7 +76,9 @@ async def investigate(
         {
             "investigation_id": investigation_id,
             "started_at": datetime.now(UTC),
-            "request": request,
+            # Redacted before it enters the graph: the checkpointer saves the input
+            # before any node runs, and keeps every checkpoint after that.
+            "request": redact_value("", request),
         },
         # The checkpointer keeps each investigation's state under its own ID.
         {"configurable": {"thread_id": investigation_id}},
