@@ -25,10 +25,13 @@ class FakeLLM:
     def __init__(
         self,
         *hypotheses: dict,
+        actions: list[dict] | None = None,
         answer: str | None = None,
         error: Exception | None = None,
     ) -> None:
         self.answer = answer or json.dumps({"hypotheses": list(hypotheses)})
+        self.actions = actions
+
         self.error = error
         self.calls: list[tuple[str, str, dict]] = []
 
@@ -36,4 +39,7 @@ class FakeLLM:
         self.calls.append((system, prompt, schema))
         if self.error is not None:
             raise self.error
+        # The remediation schema asks for actions, so those questions get actions.
+        if self.actions is not None and "actions" in schema.get("properties", {}):
+            return json.dumps({"actions": self.actions})
         return self.answer

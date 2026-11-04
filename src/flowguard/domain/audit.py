@@ -4,6 +4,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from flowguard.domain.hypotheses import IncidentCategory, RootCauseHypothesis
 from flowguard.domain.incidents import Incident
+from flowguard.domain.remediation import PlannedAction, RejectedAction
 
 InvestigationStatus = Literal["diagnosed", "abstained", "rejected"]
 ToolOutcome = Literal["ok", "denied", "failed"]
@@ -41,3 +42,7 @@ class InvestigationRecord(BaseModel):
     selected_hypothesis_id: str | None
     abstention: str | None
     errors: tuple[str, ...]
+    # Defaults, so records saved before remediation existed still load.
+    actions: tuple[PlannedAction, ...] = ()
+    rejected_actions: tuple[RejectedAction, ...] = ()
+    requires_approval: bool = False

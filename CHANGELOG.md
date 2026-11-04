@@ -35,6 +35,12 @@
 - Added `fastapi` and `uvicorn` as dependencies.
 - Diagnosed INC-001 through the API with `gemma4:12b`: 201 in 23–50 seconds, `schema_contract_mismatch`, confidence 0.90.
 - Known gap: when the model is unavailable, the investigation abstains with a 201 like any other abstention. A client can only tell the difference from the `abstention` text.
+- Added remediation. After a root cause is selected, the model proposes up to five steps, chosen from a catalogue of five allowed actions, each with a target and cited evidence.
+- Added the deterministic `validation` node. Risk, rollback, verification, and approval come from the catalogue, never from the model. A step is rejected, with its reason, when it isn't in the catalogue, cites unknown or unrelated evidence, targets something not in the evidence, or replays messages before an accepted fix.
+- Every state-changing step requires approval. The plan, the rejected steps, and whether approval is needed are saved in the audit record. Records saved before this change still load.
+- An abstention proposes no actions. If the model can't propose a plan, the investigation keeps its diagnosis with an empty plan.
+- Real Gemma output changed one rule. Requiring every step to cite the root cause's evidence rejected a replay justified by the runbook and a contract test justified by HIST-INC-044. Runbooks and past incidents now count as grounds for a step.
+- With `gemma4:12b`, INC-001's plan is: update the field mapping, replay failed messages, add a contract test, notify the service owner. Nothing was rejected, and approval is required. Gemma targets the mapping fix at `supplier-api`, while the ground truth names the transformation mapping. The evaluation runner will measure that.
 
 ## 2026-11-03
 

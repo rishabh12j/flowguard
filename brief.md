@@ -341,6 +341,8 @@ Possible categories:
 
 This node must be deterministic wherever possible.
 
+> **Built 2026-11-04:** the model chooses steps from a fixed action catalogue; code attaches each step's risk, rollback, verification, and approval requirement. Validation is fully deterministic. It rejects a step that isn't in the catalogue, cites unknown evidence, cites neither the root cause's evidence nor a runbook or past incident, targets a service or deployment not in the evidence, or replays messages before an accepted fix. Every state change requires approval. The routing's "Invalid → remediation" retry isn't built: rejected steps are dropped and recorded with their reason. Retrying belongs with graph retries and step limits.
+
 #### 9. `approval_node`
 
 - Pause the graph for human review.
@@ -1101,8 +1103,8 @@ Each seeded incident should include:
 
 ### Milestone 5 — Safety, remediation, and approval
 
-- [ ] Implement remediation schema.
-- [ ] Implement deterministic validation.
+- [x] Implement remediation schema.
+- [x] Implement deterministic validation.
 - [ ] Implement human approval pause.
 - [ ] Implement approve, reject, and request-more-evidence routes.
 - [ ] Implement audit persistence.

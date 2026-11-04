@@ -39,6 +39,9 @@ def build_record(
         selected_hypothesis_id=selected.hypothesis_id if selected else None,
         abstention=state.get("abstention"),
         errors=state.get("errors", ()),
+        actions=state.get("actions", ()),
+        rejected_actions=state.get("rejected_actions", ()),
+        requires_approval=state.get("requires_approval", False),
     )
 
 

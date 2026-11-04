@@ -16,11 +16,34 @@ from flowguard.storage.audit_repository import SqliteAuditStore
 
 pytestmark = pytest.mark.anyio
 
+INC_001_PLAN = [
+    {
+        "action": "update_field_mapping",
+        "target": "invoice-transformer",
+        "reason": "Map supplierId to supplier_id.",
+        "evidence_ids": ["LOG-882"],
+    },
+    {
+        "action": "replay_failed_messages",
+        "target": "invoice-transformer",
+        "reason": "Resend the invoices that failed.",
+        "evidence_ids": ["LOG-882"],
+    },
+    {
+        "action": "add_contract_test",
+        "target": "supplier-api",
+        "reason": "Catch renamed fields before deployment.",
+        "evidence_ids": ["DEPLOY-SOURCE-221"],
+    },
+]
+
 
 class ScriptedLLM:
-    """Always proposes INC-001's root cause, citing a failing log and a deployment."""
+    """Proposes INC-001's root cause, then the runbook's plan to fix it."""
 
     def generate(self, system: str, prompt: str, schema: dict) -> str:
+        if "actions" in schema["properties"]:
+            return json.dumps({"actions": INC_001_PLAN})
         hypothesis = {
             "description": "supplier-api 4.2.0 started sending camelCase fields.",
             "supporting_evidence_ids": ["LOG-882", "DEPLOY-SOURCE-221"],
@@ -89,6 +112,16 @@ async def test_inc_001_scores_the_proposed_root_cause_from_real_evidence(state):
 
 async def test_inc_001_takes_the_root_cause_s_category(state):
     assert state["category"] == "schema_contract_mismatch"
+
+
+async def test_inc_001_gets_the_runbook_s_plan(state):
+    assert [(action.action, action.target) for action in state["actions"]] == [
+        ("update_field_mapping", "invoice-transformer"),
+        ("replay_failed_messages", "invoice-transformer"),
+        ("add_contract_test", "supplier-api"),
+    ]
+    assert state["rejected_actions"] == ()
+    assert state["requires_approval"] is True
 
 
 async def test_inc_001_is_saved_with_every_tool_call(state, store):

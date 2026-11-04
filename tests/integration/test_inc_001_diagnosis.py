@@ -51,3 +51,8 @@ async def test_gemma_diagnoses_inc_001_end_to_end(client, embedder):
     )
     assert state["category"] == ground_truth["category"]
     assert store.get(state["investigation_id"]).status == "diagnosed"
+
+    # Whatever Gemma proposes, only validated steps reach the plan, and the ground
+    # truth says this incident needs approval.
+    assert state["actions"]
+    assert state["requires_approval"] is ground_truth["expected_approval_required"]

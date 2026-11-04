@@ -10,9 +10,11 @@ from flowguard.graph.nodes.audit import audit
 from flowguard.graph.nodes.dependency_trace import dependency_trace
 from flowguard.graph.nodes.intake import intake
 from flowguard.graph.nodes.log_analysis import log_analysis
+from flowguard.graph.nodes.remediation import remediation
 from flowguard.graph.nodes.retrieval import runbook_retrieval
 from flowguard.graph.nodes.root_cause import root_cause
-from flowguard.graph.routing import after_intake
+from flowguard.graph.nodes.validation import validation
+from flowguard.graph.routing import after_intake, after_root_cause
 from flowguard.graph.state import InvestigationState
 
 InvestigationGraph = CompiledStateGraph[
@@ -27,6 +29,9 @@ def build_graph() -> InvestigationGraph:
     graph.add_node("dependency_trace", dependency_trace)
     graph.add_node("runbook_retrieval", runbook_retrieval)
     graph.add_node("root_cause", root_cause)
+    graph.add_node("remediation", remediation)
+    graph.add_node("validation", validation)
+
     graph.add_node("audit", audit)
 
     graph.add_edge(START, "intake")
@@ -37,7 +42,11 @@ def build_graph() -> InvestigationGraph:
     graph.add_edge("log_analysis", "dependency_trace")
     # Root cause waits for both branches, so it reasons over all the evidence.
     graph.add_edge(["dependency_trace", "runbook_retrieval"], "root_cause")
-    graph.add_edge("root_cause", "audit")
+    graph.add_conditional_edges(
+        "root_cause", after_root_cause, ["remediation", "audit"]
+    )
+    graph.add_edge("remediation", "validation")
+    graph.add_edge("validation", "audit")
     graph.add_edge("audit", END)
 
     return graph.compile()

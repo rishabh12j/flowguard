@@ -62,6 +62,22 @@ def deployment(evidence_id: str, at: datetime, service: str) -> EvidenceItem:
     )
 
 
+def step(action: str, target: str, *evidence_ids: str) -> dict:
+    return {
+        "action": action,
+        "target": target,
+        "reason": "The mapping still expects snake_case fields.",
+        "evidence_ids": list(evidence_ids or ("LOG-882",)),
+    }
+
+
+INC_001_PLAN = [
+    step("update_field_mapping", "invoice-transformer"),
+    step("replay_failed_messages", "invoice-transformer"),
+    step("add_contract_test", "supplier-api", "DEPLOY-SOURCE-221"),
+]
+
+
 def proposal(
     *supporting: str,
     contradicting: tuple[str, ...] = (),
@@ -570,3 +586,120 @@ async def test_each_investigation_gets_a_new_id():
     first, second = (record.investigation_id for record in audit.records)
     assert first != second
     assert first.startswith("INVEST-")
+
+
+def diagnosing_llm(actions=None, **options) -> FakeLLM:
+    return FakeLLM(
+        proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id),
+        actions=INC_001_PLAN if actions is None else actions,
+        **options,
+    )
+
+
+async def test_a_diagnosis_gets_a_validated_plan():
+    llm = diagnosing_llm()
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert [(action.step, action.action) for action in state["actions"]] == [
+        (1, "update_field_mapping"),
+        (2, "replay_failed_messages"),
+        (3, "add_contract_test"),
+    ]
+    assert state["rejected_actions"] == ()
+    assert state["requires_approval"] is True
+    assert state["errors"] == ()
+
+
+async def test_the_catalogue_sets_risk_and_approval():
+    state = await run(
+        retriever=FakeRetriever(SPEC), tools=full_tools(), llm=diagnosing_llm()
+    )
+
+    replay = state["actions"][1]
+    assert (replay.risk, replay.changes_state, replay.requires_approval) == (
+        "high",
+        True,
+        True,
+    )
+    assert replay.rollback
+
+
+async def test_safe_actions_alone_need_no_approval():
+    llm = diagnosing_llm(actions=[step("add_contract_test", "supplier-api")])
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert [action.action for action in state["actions"]] == ["add_contract_test"]
+    assert state["requires_approval"] is False
+
+
+async def test_an_unsafe_step_is_rejected_and_the_rest_kept():
+    llm = diagnosing_llm(
+        actions=[
+            step("disable_payload_validation", "invoice-transformer"),
+            step("update_field_mapping", "invoice-transformer"),
+        ]
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    [rejected] = state["rejected_actions"]
+    assert rejected.proposed.action == "disable_payload_validation"
+    assert rejected.problem == "not an allowed action"
+    assert [action.action for action in state["actions"]] == ["update_field_mapping"]
+
+
+async def test_an_abstention_proposes_no_actions():
+    llm = FakeLLM(proposal("LOG-882"), actions=INC_001_PLAN)
+
+    state = await run(tools=full_tools(), llm=llm)
+
+    assert "abstention" in state
+    assert "actions" not in state
+    # Only the root-cause question was asked.
+    assert len(llm.calls) == 1
+
+
+async def test_the_model_is_asked_for_actions_only_after_a_diagnosis():
+    llm = diagnosing_llm()
+
+    await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    first, second = llm.calls
+    assert "hypotheses" in first[2]["properties"]
+    assert "actions" in second[2]["properties"]
+
+
+async def test_a_failed_remediation_plans_nothing():
+    # An empty plan breaks the schema, which asks for at least one step.
+    llm = diagnosing_llm(actions=[])
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert state["selected_root_cause"].hypothesis_id == "HYP-1"
+    assert state["actions"] == ()
+    assert state["requires_approval"] is False
+    assert state["errors"] == (
+        "remediation: the model could not propose actions: "
+        "the answer broke the schema in 1 places",
+    )
+
+
+async def test_the_plan_and_its_rejections_are_audited():
+    audit = FakeAudit()
+    llm = diagnosing_llm(
+        actions=[
+            step("replay_failed_messages", "invoice-transformer"),
+            step("update_field_mapping", "invoice-transformer"),
+        ]
+    )
+
+    await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm, audit=audit)
+
+    [record] = audit.records
+    assert [action.action for action in record.actions] == ["update_field_mapping"]
+    assert record.rejected_actions[0].problem == (
+        "must come after a step that fixes the cause"
+    )
+    assert record.requires_approval is True
