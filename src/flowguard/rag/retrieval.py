@@ -1,5 +1,11 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
+from qdrant_client.models import (
+    Condition,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    ScoredPoint,
+)
 
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.redaction import redact_evidence
@@ -23,13 +29,16 @@ METADATA_FIELDS = (
 )
 
 
-def current_documents_for(system: str) -> Filter:
-    return Filter(
-        must=[
-            FieldCondition(key="system", match=MatchValue(value=system)),
-            FieldCondition(key="is_current", match=MatchValue(value=True)),
-        ]
-    )
+def current_documents_for(system: str, document_type: str | None = None) -> Filter:
+    conditions: list[Condition] = [
+        FieldCondition(key="system", match=MatchValue(value=system)),
+        FieldCondition(key="is_current", match=MatchValue(value=True)),
+    ]
+    if document_type is not None:
+        conditions.append(
+            FieldCondition(key="document_type", match=MatchValue(value=document_type))
+        )
+    return Filter(must=conditions)
 
 
 def to_score(cosine: float) -> float:
@@ -64,6 +73,7 @@ def retrieve(
     system: str,
     limit: int = LIMIT,
     min_score: float = MIN_SCORE,
+    document_type: str | None = None,
 ) -> list[EvidenceItem]:
     if not query.strip():
         raise ValueError("query must not be blank")
@@ -73,7 +83,7 @@ def retrieve(
     points = client.query_points(
         COLLECTION,
         query=embedder.embed_query(query),
-        query_filter=current_documents_for(system),
+        query_filter=current_documents_for(system, document_type),
         limit=limit,
     ).points
     return [to_evidence(point) for point in points if point.score >= min_score]

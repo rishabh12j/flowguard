@@ -8,7 +8,7 @@ from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import POLICIES, ToolDenied, ToolGuard, read_policy
 from flowguard.mcp.servers.knowledge.server import create_server
 from flowguard.mcp.servers.observability.server import server as observability
-from flowguard.mcp.servers.operations.server import server as operations
+from flowguard.mcp.servers.operations.server import create_server as operations_server
 
 pytestmark = pytest.mark.anyio
 
@@ -110,7 +110,12 @@ async def test_a_slow_tool_times_out():
 
 async def test_every_server_tool_has_a_policy():
     # The knowledge server as an investigation builds it, with document search.
-    knowledge = create_server(lambda query, *, system, limit: [])
+    def no_documents(query, *, system, limit, document_type=None):
+        return []
+
+    # Both servers as an investigation builds them, with document search.
+    knowledge = create_server(no_documents)
+    operations = operations_server(no_documents)
     names = set()
     for server in (observability, operations, knowledge):
         async with Client(server) as client:

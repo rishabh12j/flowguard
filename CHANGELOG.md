@@ -77,6 +77,11 @@
 - Logs and deployments now record which system they belong to.
 - Replaced `test_inc_001_solvable.py`, a hand-written solver, with `test_incidents_solvable.py`. It runs every incident through the real graph, MCP servers, and retrieval, with an oracle model that cites the ground truth. It must gather the required evidence, select the right category, and get the reference plan through validation.
 - Fixed in review: a metric that never crossed its threshold still earned the path signal. It isn't a change, so it now earns nothing.
+- Added INC-004 (a configuration change makes the uploader put the payment file in `/outbound/payments`, which the bank never reads) and INC-005 (a configuration change shrinks the database connection pool from 50 to 5, so requests time out at the morning peak). All five incidents from the brief's catalogue now exist, each a different category.
+- Added data schemas (`seed_schemas.py`): every log, deployment, alert, metric series, dependency map, document header, and ground truth is validated as it loads. A map's edges must join known nodes, metric points must be in time order, and a document must be in the folder for its type. `load_ground_truth` now returns a `GroundTruth` model.
+- The operations server gained the brief's `get_incident` and `search_incidents`. Retrieval can now filter by document type inside the search, so other documents can't fill the result limit.
+- Added the `redeliver_file` catalogue action.
+- Fixed INC-003's dependency map: an edge from A to B means B depends on A, so the carrier API now points to `order-sync-worker`.
 
 ## 2026-11-03
 

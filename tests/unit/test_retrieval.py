@@ -158,3 +158,16 @@ def test_a_document_quoting_a_credential_is_redacted(embedder):
     assert item.content == (
         "Connect with postgres://svc:[REDACTED]@db.internal/invoices first."
     )
+
+
+def test_a_document_type_is_part_of_the_search(client, embedder):
+    results = retrieve(
+        RUNBOOK.text,
+        embedder,
+        client,
+        system=SYSTEM,
+        min_score=0,
+        document_type="historical_incident",
+    )
+
+    assert {item.source_type for item in results} == {"historical_incident"}

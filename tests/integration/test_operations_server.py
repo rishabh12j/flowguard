@@ -2,7 +2,7 @@ import pytest
 from mcp import Client
 
 from flowguard.mcp.servers.operations import server as module
-from flowguard.mcp.servers.operations.server import server
+from flowguard.mcp.servers.operations.server import create_server, server
 
 pytestmark = pytest.mark.anyio
 
@@ -102,3 +102,68 @@ async def test_tool_is_marked_read_only():
         tools = await client.list_tools()
 
     assert tools.tools[0].annotations.read_only_hint is True
+
+
+async def call(server_to_use, name, arguments):
+    async with Client(server_to_use) as client:
+        return await client.call_tool(name, arguments)
+
+
+def found(result):
+    return [item["evidence_id"] for item in result.structured_content["items"]]
+
+
+async def test_a_past_incident_by_id():
+    assert found(
+        await call(server, "get_incident", {"incident_id": "HIST-INC-072"})
+    ) == ["HIST-INC-072"]
+    assert found(await call(server, "get_incident", {"incident_id": "HIST-0"})) == []
+
+
+class RecordingSearch:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def __call__(self, query, *, system, limit, document_type=None):
+        self.calls.append(
+            {"query": query, "system": system, "limit": limit, "type": document_type}
+        )
+        return [module.PAST_INCIDENTS[0]]
+
+
+async def test_search_incidents_asks_only_for_past_incidents():
+    search = RecordingSearch()
+
+    result = await call(
+        create_server(search),
+        "search_incidents",
+        {"query": "wrong directory", "system": "vendor-payments"},
+    )
+
+    assert found(result) == [module.PAST_INCIDENTS[0].evidence_id]
+    assert search.calls == [
+        {
+            "query": "wrong directory",
+            "system": "vendor-payments",
+            "limit": 3,
+            "type": "historical_incident",
+        }
+    ]
+
+
+async def test_search_incidents_refuses_a_large_top_k():
+    result = await call(
+        create_server(RecordingSearch()),
+        "search_incidents",
+        {"query": "timeouts", "system": "customer-portal", "top_k": 11},
+    )
+
+    assert result.is_error is True
+    assert "top_k must be between 1 and 10" in result.content[0].text
+
+
+async def test_a_server_without_a_search_has_no_search_incidents_tool():
+    async with Client(server) as client:
+        tools = await client.list_tools()
+
+    assert "search_incidents" not in {tool.name for tool in tools.tools}

@@ -14,9 +14,10 @@ from flowguard.domain.redaction import redact_evidence
 from flowguard.graph.context import EvidenceUnavailable, Found
 from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import ToolDenied, ToolGuard
-from flowguard.mcp.servers.knowledge.server import DocumentSearch, create_server
+from flowguard.mcp.servers.knowledge.server import DocumentSearch
+from flowguard.mcp.servers.knowledge.server import create_server as knowledge_server
 from flowguard.mcp.servers.observability.server import server as observability
-from flowguard.mcp.servers.operations.server import server as operations
+from flowguard.mcp.servers.operations.server import create_server as operations_server
 
 
 class McpEvidenceTools:
@@ -131,8 +132,8 @@ async def open_evidence_tools(
     guard = guard or ToolGuard()
     async with (
         Client(observability) as observability_client,
-        Client(operations) as operations_client,
-        Client(create_server(search)) as knowledge_client,
+        Client(operations_server(search)) as operations_client,
+        Client(knowledge_server(search)) as knowledge_client,
     ):
         yield McpEvidenceTools(
             GuardedClient(observability_client, guard),

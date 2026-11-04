@@ -1068,11 +1068,11 @@ Each seeded incident should include:
 
 ### Milestone 1 — Synthetic incident environment
 
-- [ ] Create five ground-truth incidents.
+- [x] Create five ground-truth incidents.
 
-> **Status 2026-11-04:** INC-001, INC-002 (expired bank credential, 401), and INC-003 (backfill burst, 429) exist, each with logs, deployments including decoys, a dependency map, an API spec, a runbook, a past incident, and ground truth with a `reference_plan`. INC-002 adds alerts and INC-003 adds metrics, both new data types with their own files. `test_incidents_solvable.py` proves each incident can be solved by the real graph when the model's answers are perfect.
-- [ ] Create logs, runbooks, API specs, dependency maps, and deployments.
-- [ ] Create data schemas.
+> **Built 2026-11-04:** all five incidents from section 8 exist: INC-001 (schema mismatch), INC-002 (expired bank credential, 401), INC-003 (backfill burst, 429), INC-004 (payment file uploaded to the wrong SFTP directory), and INC-005 (connection pool shrunk from 50 to 5). Each has logs, deployments including decoys, a dependency map, an API spec, a runbook, a past incident, and ground truth with a `reference_plan`. Alerts and metrics are seeded where an incident needs them. Every raw file is checked against a Pydantic model in `seed_schemas.py` when it's loaded. In a dependency map, an edge from A to B means B depends on A. `test_incidents_solvable.py` proves each incident can be solved by the real graph when the model's answers are perfect.
+- [x] Create logs, runbooks, API specs, dependency maps, and deployments.
+- [x] Create data schemas.
 - [x] Add deterministic data loaders.
 - [x] Add seed validation tests.
 
@@ -1080,11 +1080,11 @@ Each seeded incident should include:
 
 ### Milestone 2 — MCP data-access layer
 
-- [ ] Implement observability MCP server.
+- [x] Implement observability MCP server.
 - [x] Implement knowledge MCP server.
-- [ ] Implement operations MCP server.
+- [x] Implement operations MCP server.
 
-> **Status 2026-11-04:** all three servers run in-process, and every piece of evidence the graph uses now comes through them. The knowledge server has all three of its tools. Still missing: `get_metrics` and `get_alert` on the observability server, and `search_incidents` and `get_incident` on the operations server. The seeded data has no metrics or alerts yet, so these come with the new incidents. Past incidents are already searchable through `search_runbooks`.
+> **Built 2026-11-04:** all three servers have the brief's tools, run in-process, and every piece of evidence the graph uses comes through them. Two differences from section 15: the observability server also has `search_alerts`, because the graph finds alerts by time, not by ID; and `get_metrics` takes `metric_names` as optional, so the graph can ask for everything a service records. `search_incidents` filters to past incidents inside the search, before the result limit.
 - [x] Add scoped permissions and call limits.
 - [x] Add MCP integration tests.
 
@@ -1153,7 +1153,7 @@ Each seeded incident should include:
 
 The MVP is complete when:
 
-- [ ] Five seeded incidents exist with known ground truth.
+- [x] Five seeded incidents exist with known ground truth.
 - [x] Evidence is accessed through MCP tools.
 - [ ] LangGraph controls a stateful investigation workflow.
 - [ ] RAG retrieves runbooks, API specifications, and historical incidents.

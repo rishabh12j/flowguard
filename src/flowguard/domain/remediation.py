@@ -149,6 +149,17 @@ CATALOGUE = {
             "responses occur.",
         ),
         ActionSpec(
+            name="redeliver_file",
+            purpose="deliver a file again, to the place its receiver reads from",
+            kind="mitigation",
+            target="service",
+            changes_state=True,
+            risk="medium",
+            requires_fix_first=True,
+            rollback="Remove the redelivered file before the receiver picks it up.",
+            verification="Confirm the receiver acknowledged the file exactly once.",
+        ),
+        ActionSpec(
             name="add_monitoring",
             purpose="add an alert or check that would catch this failure earlier",
             kind="corrective",

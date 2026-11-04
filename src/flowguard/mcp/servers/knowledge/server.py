@@ -17,7 +17,7 @@ API_SPECS = [item for item in EVIDENCE if item.source_type == "api_spec"]
 
 class DocumentSearch(Protocol):
     def __call__(
-        self, query: str, *, system: str, limit: int
+        self, query: str, *, system: str, limit: int, document_type: str | None = None
     ) -> list[EvidenceItem]: ...
 
 

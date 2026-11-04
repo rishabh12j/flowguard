@@ -49,6 +49,8 @@ POLICIES = {
         read_policy("get_api_spec", max_calls=5),
         # One search per round: the first, and a reviewer's follow-up.
         read_policy("search_runbooks", max_calls=3),
+        read_policy("get_incident", max_calls=5),
+        read_policy("search_incidents", max_calls=3),
     )
 }
 

@@ -34,9 +34,12 @@ def logs_in_window(incident_id: str):
 
 
 def test_there_are_seeded_incidents_with_ground_truth():
-    assert INCIDENTS[:3] == ["INC-001", "INC-002", "INC-003"]
+    # The brief's catalogue: five incidents, each a different kind of failure.
+    assert INCIDENTS == ["INC-001", "INC-002", "INC-003", "INC-004", "INC-005"]
+    categories = [load_ground_truth(incident_id).category for incident_id in INCIDENTS]
+    assert len(set(categories)) == len(categories)
     for incident_id in INCIDENTS:
-        assert load_ground_truth(incident_id)["incident_id"] == incident_id
+        assert load_ground_truth(incident_id).incident_id == incident_id
 
 
 def test_evidence_ids_are_unique():
@@ -51,25 +54,21 @@ def test_incident_windows_do_not_overlap():
 
 
 @pytest.mark.parametrize("incident_id", INCIDENTS)
-def test_ground_truth_is_complete(incident_id):
-    truth = load_ground_truth(incident_id)
-
-    assert truth["category"] in CATEGORY_DEFINITIONS
-    assert truth["required_evidence_ids"]
-    assert truth["reference_plan"]
-    assert isinstance(truth["expected_approval_required"], bool)
+def test_ground_truth_names_a_known_category(incident_id):
+    # The schema checks the rest of the ground truth's shape.
+    assert load_ground_truth(incident_id).category in CATEGORY_DEFINITIONS
 
 
 @pytest.mark.parametrize("incident_id", INCIDENTS)
 def test_required_evidence_exists(incident_id):
-    for evidence_id in load_ground_truth(incident_id)["required_evidence_ids"]:
+    for evidence_id in load_ground_truth(incident_id).required_evidence_ids:
         assert evidence_id in BY_ID
 
 
 @pytest.mark.parametrize("incident_id", INCIDENTS)
 def test_the_reference_plan_uses_catalogue_actions(incident_id):
-    for step in load_ground_truth(incident_id)["reference_plan"]:
-        assert step["action"] in CATALOGUE
+    for step in load_ground_truth(incident_id).reference_plan:
+        assert step.action in CATALOGUE
 
 
 @pytest.mark.parametrize("incident_id", INCIDENTS)
