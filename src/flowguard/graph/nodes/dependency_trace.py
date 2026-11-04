@@ -1,23 +1,8 @@
-from datetime import timedelta
-
 from langgraph.runtime import Runtime
 
-from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.causality import LOOKBACK, services_at_or_upstream
 from flowguard.graph.context import Dependencies, EvidenceUnavailable, Found
 from flowguard.graph.state import InvestigationState
-
-# A deployment can cause failures long after it finishes, so look back a full day.
-LOOKBACK = timedelta(hours=24)
-
-
-def services_at_or_upstream(dependency_map: EvidenceItem, service: str) -> set[str]:
-    edges = dependency_map.metadata["edges"]
-    found = {service}
-    frontier = {service}
-    while frontier:
-        frontier = {edge["from"] for edge in edges if edge["to"] in frontier} - found
-        found |= frontier
-    return found
 
 
 async def dependency_trace(

@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
+from fakes import FakeLLM
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.graph.builder import GRAPH, investigate
 from flowguard.graph.context import Dependencies, EvidenceUnavailable, Found
+from flowguard.llm.client import LLMError
+
 
 pytestmark = pytest.mark.anyio
 
@@ -23,10 +25,10 @@ def anyio_backend():
     return "asyncio"
 
 
-def document(evidence_id: str) -> EvidenceItem:
+def document(evidence_id: str, source_type: str = "runbook") -> EvidenceItem:
     return EvidenceItem(
         evidence_id=evidence_id,
-        source_type="runbook",
+        source_type=source_type,
         source_name="invoice-transformer",
         title="A runbook",
         content="Some steps.",
@@ -57,6 +59,19 @@ def deployment(evidence_id: str, at: datetime, service: str) -> EvidenceItem:
         content="Deployed.",
         metadata={},
     )
+
+
+def proposal(*supporting: str, contradicting: tuple[str, ...] = ()) -> dict:
+    return {
+        "description": "supplier-api now sends camelCase fields.",
+        "supporting_evidence_ids": list(supporting),
+        "contradicting_evidence_ids": list(contradicting),
+        "missing_evidence": [],
+    }
+
+
+SPEC = document("SPEC-INVOICE-V3#post-v3-invoices", "api_spec")
+PAST = document("HIST-INC-044#full-document", "historical_incident")
 
 
 DEPENDENCY_MAP = EvidenceItem(
@@ -129,6 +144,19 @@ class FakeTools:
         return self._answer("get_dependency_map", service)
 
 
+def full_tools(**options) -> FakeTools:
+    return FakeTools((FAILURE,), (UPSTREAM_DEPLOY,), (DEPENDENCY_MAP,), **options)
+
+
+async def run(request=REQUEST, retriever=None, tools=None, llm=None):
+    dependencies = Dependencies(
+        retriever=retriever or FakeRetriever(),
+        tools=tools or FakeTools(),
+        llm=llm or FakeLLM(proposal("LOG-882")),
+    )
+    return await investigate(request, dependencies)
+
+
 def ids(state) -> set[str]:
     # EvidenceItem can't go in a set: its metadata is a dict, which can't be hashed.
     return {item.evidence_id for item in state["evidence"]}
@@ -136,13 +164,6 @@ def ids(state) -> set[str]:
 
 def called(tools: FakeTools, name: str) -> list[tuple]:
     return [call[1:] for call in tools.calls if call[0] == name]
-
-
-async def run(request=REQUEST, retriever=None, tools=None):
-    dependencies = Dependencies(
-        retriever=retriever or FakeRetriever(), tools=tools or FakeTools()
-    )
-    return await investigate(request, dependencies)
 
 
 async def test_a_valid_request_becomes_an_incident():
@@ -266,6 +287,7 @@ async def test_truncated_logs_are_reported():
 async def test_an_invalid_request_calls_no_tools():
     retriever = FakeRetriever(document("RB-SCHEMA-COMPAT#full-document"))
     tools = FakeTools((FAILURE,))
+    llm = FakeLLM(proposal("LOG-882"))
 
     state = await run({**REQUEST, "end_time": "2026-07-15T08:00:00Z"}, retriever, tools)
 
@@ -273,6 +295,7 @@ async def test_an_invalid_request_calls_no_tools():
     assert state["evidence"] == ()
     assert retriever.calls == []
     assert tools.calls == []
+    assert llm.calls == []
 
 
 async def test_errors_name_each_problem():
@@ -294,7 +317,9 @@ async def test_errors_do_not_repeat_the_rejected_value():
 
 
 async def test_a_missing_request_is_rejected():
-    dependencies = Dependencies(retriever=FakeRetriever(), tools=FakeTools())
+    dependencies = Dependencies(
+        retriever=FakeRetriever(), tools=FakeTools(), llm=FakeLLM()
+    )
 
     state = await GRAPH.ainvoke({}, context=dependencies)
 
@@ -304,7 +329,9 @@ async def test_a_missing_request_is_rejected():
 async def test_evidence_already_in_the_state_is_kept():
     earlier = document("NOTE-1")
     runbook = document("RB-SCHEMA-COMPAT#full-document")
-    dependencies = Dependencies(retriever=FakeRetriever(runbook), tools=FakeTools())
+    dependencies = Dependencies(
+        retriever=FakeRetriever(runbook), tools=FakeTools(), llm=FakeLLM()
+    )
 
     state = await GRAPH.ainvoke(
         {"request": REQUEST, "evidence": (earlier,)}, context=dependencies
@@ -312,3 +339,98 @@ async def test_evidence_already_in_the_state_is_kept():
 
     assert earlier in state["evidence"]
     assert runbook in state["evidence"]
+
+
+async def test_selects_a_well_supported_root_cause():
+    llm = FakeLLM(proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id))
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    best = state["selected_root_cause"]
+    assert best.hypothesis_id == "HYP-1"
+    assert best.confidence == 0.90
+    assert "abstention" not in state
+
+
+async def test_code_ranks_the_hypotheses_not_the_model():
+    llm = FakeLLM(proposal("LOG-882"), proposal("LOG-882", "DEPLOY-SOURCE-221"))
+
+    state = await run(tools=full_tools(), llm=llm)
+
+    assert [item.hypothesis_id for item in state["hypotheses"]] == ["HYP-2", "HYP-1"]
+    assert state["selected_root_cause"].hypothesis_id == "HYP-2"
+
+
+async def test_abstains_when_the_best_hypothesis_scores_too_low():
+    state = await run(tools=full_tools(), llm=FakeLLM(proposal("LOG-882")))
+
+    assert "selected_root_cause" not in state
+    assert state["abstention"] == "the best hypothesis scored 0.30, below 0.65"
+    assert state["hypotheses"][0].confidence == 0.30
+
+
+async def test_a_hypothesis_exactly_at_the_threshold_is_selected():
+    # 0.85 - 0.20 is 0.6499999999999999 in floating point.
+    llm = FakeLLM(
+        proposal(
+            "LOG-882",
+            "DEPLOY-SOURCE-221",
+            PAST.evidence_id,
+            contradicting=(SPEC.evidence_id,),
+        )
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC, PAST), tools=full_tools(), llm=llm)
+
+    assert state["selected_root_cause"].confidence == 0.65
+
+
+async def test_a_missing_source_lowers_confidence():
+    llm = FakeLLM(proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id))
+
+    state = await run(
+        retriever=FakeRetriever(SPEC), tools=full_tools(truncated=True), llm=llm
+    )
+
+    best = state["selected_root_cause"]
+    assert best.confidence == 0.75
+    assert best.confidence_reason.endswith("-0.15 missing evidence")
+
+
+async def test_abstains_when_the_model_fails():
+    llm = FakeLLM(error=LLMError("gemma4:12b failed with 500"))
+
+    state = await run(tools=full_tools(), llm=llm)
+
+    assert state["abstention"] == (
+        "the model could not propose a root cause: gemma4:12b failed with 500"
+    )
+    assert "hypotheses" not in state
+
+
+async def test_abstains_when_the_model_cites_unknown_evidence():
+    state = await run(tools=full_tools(), llm=FakeLLM(proposal("LOG-999")))
+
+    assert "LOG-999" in state["abstention"]
+    assert "selected_root_cause" not in state
+
+
+async def test_abstains_without_calling_the_model_when_there_is_no_evidence():
+    llm = FakeLLM(proposal("LOG-882"))
+
+    state = await run(llm=llm)
+
+    assert state["abstention"] == "no evidence was gathered"
+    assert llm.calls == []
+
+
+async def test_root_cause_runs_once_with_evidence_from_every_branch():
+    llm = FakeLLM(proposal("LOG-882"))
+
+    await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert len(llm.calls) == 1
+    prompt = llm.calls[0][1]
+    assert "ID: LOG-882" in prompt
+    assert f"ID: {SPEC.evidence_id}" in prompt
+    assert "ID: DEPLOY-SOURCE-221" in prompt

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import NamedTuple, Protocol
 
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.llm.client import LLM
 
 
 class EvidenceUnavailable(Exception):
@@ -33,3 +34,4 @@ class EvidenceTools(Protocol):
 class Dependencies:
     retriever: Retriever
     tools: EvidenceTools
+    llm: LLM

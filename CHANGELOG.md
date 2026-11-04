@@ -11,6 +11,11 @@
 - Added the `dependency_trace` node, which finds deployments in the 24 hours before the first failure and drops those downstream of it on the dependency map.
 - Log analysis and document retrieval now run in parallel. The graph runs asynchronously.
 - Evidence from MCP is validated on arrival. A failing, denied, or truncated tool call is recorded in `errors` without stopping the investigation.
+- Added the `root_cause` node. The model proposes hypotheses, and code scores them with the brief's confidence rubric, ranks them, and selects one only at 0.65 or above.
+- The investigation abstains, with a reason, when there's no evidence, when the model fails or breaks the rules, or when no hypothesis scores high enough.
+- Each source that failed or was cut short lowers confidence by 0.15.
+- Moved the 24-hour lookback and the dependency-map walk into `domain/causality.py`, so evidence gathering and scoring use the same rule.
+- With `gemma4:12b`, the graph now diagnoses INC-001 end to end. The rubric score isn't yet a measured accuracy.
 
 ## 2026-11-03
 

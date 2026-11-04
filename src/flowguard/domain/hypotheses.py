@@ -23,3 +23,11 @@ class HypothesisProposal(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     hypotheses: tuple[ProposedHypothesis, ...] = Field(min_length=1, max_length=3)
+
+
+class RootCauseHypothesis(ProposedHypothesis):
+    """A proposed hypothesis after code has scored its confidence."""
+
+    hypothesis_id: str = Field(pattern=r"^\S+$")
+    confidence: float = Field(ge=0, le=1)
+    confidence_reason: str

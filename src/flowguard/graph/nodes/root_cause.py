@@ -1,12 +1,24 @@
 from collections.abc import Sequence
 from typing import Any
 
+from langgraph.runtime import Runtime
 from pydantic import ValidationError
 
+from flowguard.domain.confidence import score
 from flowguard.domain.evidence import EvidenceItem
-from flowguard.domain.hypotheses import HypothesisProposal, ProposedHypothesis
+from flowguard.domain.hypotheses import (
+    HypothesisProposal,
+    ProposedHypothesis,
+    RootCauseHypothesis,
+)
 from flowguard.domain.incidents import Incident
-from flowguard.llm.client import LLM
+from flowguard.graph.context import Dependencies
+from flowguard.graph.state import InvestigationState
+from flowguard.llm.client import LLM, LLMError
+
+# The brief's line between moderate and insufficient confidence.
+MIN_CONFIDENCE = 0.65
+
 
 SYSTEM = (
     "You are an incident investigator. Propose up to three root-cause hypotheses, "
@@ -75,3 +87,48 @@ def propose_hypotheses(
         if cited - known:
             raise InvalidProposal(f"cites unknown evidence: {sorted(cited - known)}")
     return proposal.hypotheses
+
+
+# A plain def, so LangGraph runs it in a thread and the slow model call does not
+# block the event loop.
+def root_cause(
+    state: InvestigationState, runtime: Runtime[Dependencies]
+) -> InvestigationState:
+    evidence = state.get("evidence", ())
+    if not evidence:
+        return {"abstention": "no evidence was gathered"}
+
+    try:
+        proposals = propose_hypotheses(state["incident"], evidence, runtime.context.llm)
+    except (LLMError, InvalidProposal) as error:
+        return {"abstention": f"the model could not propose a root cause: {error}"}
+
+    by_id = {item.evidence_id: item for item in evidence}
+    # Every recorded problem is a source that failed or was cut short.
+    missing_sources = len(state.get("errors", ()))
+    hypotheses = []
+    for number, proposal in enumerate(proposals, start=1):
+        confidence, reason = score(
+            proposal, by_id, state.get("first_failure"), missing_sources
+        )
+        hypotheses.append(
+            RootCauseHypothesis(
+                **proposal.model_dump(),
+                hypothesis_id=f"HYP-{number}",
+                confidence=confidence,
+                confidence_reason=reason,
+            )
+        )
+
+    # Code ranks the hypotheses, so the model's ordering doesn't decide the answer.
+    ranked = tuple(sorted(hypotheses, key=lambda item: item.confidence, reverse=True))
+    best = ranked[0]
+    if best.confidence < MIN_CONFIDENCE:
+        return {
+            "hypotheses": ranked,
+            "abstention": (
+                f"the best hypothesis scored {best.confidence:.2f}, "
+                f"below {MIN_CONFIDENCE:.2f}"
+            ),
+        }
+    return {"hypotheses": ranked, "selected_root_cause": best}

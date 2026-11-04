@@ -1088,7 +1088,7 @@ Each seeded incident should include:
 - [x] Implement log analysis.
 - [x] Implement dependency tracing.
 - [x] Implement runbook retrieval.
-- [ ] Implement root-cause synthesis.
+- [x] Implement root-cause synthesis.
 - [ ] Implement graph retries and step limits.
 
 **Exit condition:** The graph diagnoses one incident end to end.
