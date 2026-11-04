@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import NamedTuple, Protocol
 
+from flowguard.domain.audit import InvestigationRecord, ToolCallRecord
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.llm.client import LLM
 
@@ -21,6 +22,9 @@ class Retriever(Protocol):
 
 
 class EvidenceTools(Protocol):
+    # Every call made through these tools, in order, for the audit.
+    history: list[ToolCallRecord]
+
     async def search_logs(self, start_time: datetime, end_time: datetime) -> Found: ...
 
     async def get_deployments(
@@ -30,8 +34,13 @@ class EvidenceTools(Protocol):
     async def get_dependency_map(self, service: str) -> Found: ...
 
 
+class AuditStore(Protocol):
+    def save(self, record: InvestigationRecord) -> None: ...
+
+
 @dataclass(frozen=True)
 class Dependencies:
     retriever: Retriever
     tools: EvidenceTools
     llm: LLM
+    audit: AuditStore

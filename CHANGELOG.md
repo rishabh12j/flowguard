@@ -19,6 +19,13 @@
 - Each hypothesis now carries one of the brief's 11 incident categories, limited by the schema, and the incident takes the selected root cause's category, or `unknown` when FlowGuard abstains. This replaces a separate triage node. The reasons are recorded in the brief.
 - The prompt defines every category. Without definitions, Gemma labelled INC-001 `data_quality` in 3 of 3 runs; with them, `schema_contract_mismatch` in 3 of 3, matching the ground truth.
 - Known gap: the confidence rubric only rewards citations, so citing everything can only raise a score. Evidence precision in the evaluation runner should drive the fix.
+- Added the `audit` node. Every investigation, whether diagnosed, abstained, or rejected, ends by saving an `InvestigationRecord` to SQLite.
+- Each investigation gets an ID (`INVEST-…`) and a start time before the graph runs.
+- `McpEvidenceTools` records every tool call, with its arguments, outcome (`ok`, `denied`, or `failed`), item count, truncation, and duration.
+- The record stores the validated incident, never the raw request, so a rejected request leaves no trace of its contents.
+- Records can only be added. Saving the same investigation twice fails instead of overwriting it.
+- If the record can't be saved, the investigation fails instead of returning an unaudited result.
+- Not yet audited: runbook retrieval (it doesn't go through MCP yet), full tool results, raw model output, and approvals.
 
 ## 2026-11-03
 

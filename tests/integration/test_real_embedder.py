@@ -1,9 +1,10 @@
 import math
+
 import pytest
+
 from flowguard.dataset import load_evidence, load_incident
 from flowguard.rag.ingestion import COLLECTION, knowledge_chunks
 from flowguard.rag.retrieval import retrieve
-
 
 CHUNKS = knowledge_chunks(load_evidence())
 

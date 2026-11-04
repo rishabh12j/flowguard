@@ -2,11 +2,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fakes import FakeLLM
+
+from flowguard.domain.audit import ToolCallRecord
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.graph.builder import GRAPH, investigate
 from flowguard.graph.context import Dependencies, EvidenceUnavailable, Found
 from flowguard.llm.client import LLMError
-
 
 pytestmark = pytest.mark.anyio
 
@@ -132,6 +133,7 @@ class FakeTools:
         }
         self.failing = failing
         self.calls: list[tuple] = []
+        self.history: list[ToolCallRecord] = []
 
     def _answer(self, name: str, *arguments) -> Found:
         self.calls.append((name, *arguments))
@@ -153,13 +155,32 @@ def full_tools(**options) -> FakeTools:
     return FakeTools((FAILURE,), (UPSTREAM_DEPLOY,), (DEPENDENCY_MAP,), **options)
 
 
-async def run(request=REQUEST, retriever=None, tools=None, llm=None):
-    dependencies = Dependencies(
+class FakeAudit:
+    """Keeps saved records in a list, or fails on request."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.records: list = []
+        self.error = error
+
+    def save(self, record) -> None:
+        if self.error is not None:
+            raise self.error
+        self.records.append(record)
+
+
+def dependencies(retriever=None, tools=None, llm=None, audit=None) -> Dependencies:
+    return Dependencies(
         retriever=retriever or FakeRetriever(),
         tools=tools or FakeTools(),
         llm=llm or FakeLLM(proposal("LOG-882")),
+        audit=audit or FakeAudit(),
     )
-    return await investigate(request, dependencies)
+
+
+async def run(request=REQUEST, retriever=None, tools=None, llm=None, audit=None):
+    return await investigate(
+        request, dependencies(retriever, tools, llm, audit), investigation_id="INVEST-1"
+    )
 
 
 def ids(state) -> set[str]:
@@ -322,24 +343,22 @@ async def test_errors_do_not_repeat_the_rejected_value():
 
 
 async def test_a_missing_request_is_rejected():
-    dependencies = Dependencies(
-        retriever=FakeRetriever(), tools=FakeTools(), llm=FakeLLM()
-    )
-
-    state = await GRAPH.ainvoke({}, context=dependencies)
-
+    state = await run({})
     assert "incident_id: Field required" in state["errors"]
 
 
 async def test_evidence_already_in_the_state_is_kept():
     earlier = document("NOTE-1")
     runbook = document("RB-SCHEMA-COMPAT#full-document")
-    dependencies = Dependencies(
-        retriever=FakeRetriever(runbook), tools=FakeTools(), llm=FakeLLM()
-    )
 
     state = await GRAPH.ainvoke(
-        {"request": REQUEST, "evidence": (earlier,)}, context=dependencies
+        {
+            "investigation_id": "INVEST-1",
+            "started_at": WINDOW_START,
+            "request": REQUEST,
+            "evidence": (earlier,),
+        },
+        context=dependencies(retriever=FakeRetriever(runbook), llm=FakeLLM()),
     )
 
     assert earlier in state["evidence"]
@@ -473,3 +492,81 @@ async def test_no_evidence_leaves_the_category_unknown():
     state = await run()
 
     assert state["category"] == "unknown"
+
+
+async def test_a_diagnosis_is_audited():
+    audit = FakeAudit()
+    llm = FakeLLM(proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id))
+
+    state = await run(
+        retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm, audit=audit
+    )
+
+    [record] = audit.records
+    assert state["status"] == record.status == "diagnosed"
+    assert record.investigation_id == "INVEST-1"
+    assert record.incident.incident_id == "INC-001"
+    assert record.category == "schema_contract_mismatch"
+    assert record.selected_hypothesis_id == "HYP-1"
+    assert record.hypotheses[0].confidence == 0.90
+    assert set(record.evidence_ids) == {
+        "LOG-882",
+        "DEPLOY-SOURCE-221",
+        "DEPMAP-INVOICE",
+        SPEC.evidence_id,
+    }
+    assert record.started_at <= record.finished_at
+
+
+async def test_an_abstention_is_audited_with_its_reason():
+    audit = FakeAudit()
+
+    state = await run(tools=full_tools(), audit=audit)
+
+    [record] = audit.records
+    assert state["status"] == record.status == "abstained"
+    assert record.abstention == "the best hypothesis scored 0.30, below 0.65"
+    assert record.selected_hypothesis_id is None
+
+
+async def test_a_rejected_request_is_audited_without_its_contents():
+    audit = FakeAudit()
+
+    state = await run({**REQUEST, "affected_system": "password hunter2"}, audit=audit)
+
+    [record] = audit.records
+    assert state["status"] == record.status == "rejected"
+    assert record.incident is None
+    assert record.errors
+    assert "hunter2" not in record.model_dump_json()
+
+
+async def test_the_tool_history_is_audited():
+    audit = FakeAudit()
+    tools = full_tools()
+    call = ToolCallRecord(
+        tool="search_logs", arguments={}, outcome="ok", items=1, seconds=0.01
+    )
+    tools.history.append(call)
+
+    await run(tools=tools, audit=audit)
+
+    assert audit.records[0].tool_calls == (call,)
+
+
+async def test_an_audit_that_cannot_be_saved_fails_the_investigation():
+    audit = FakeAudit(error=OSError("disk full"))
+
+    with pytest.raises(OSError, match="disk full"):
+        await run(tools=full_tools(), audit=audit)
+
+
+async def test_each_investigation_gets_a_new_id():
+    audit = FakeAudit()
+
+    await investigate(REQUEST, dependencies(audit=audit))
+    await investigate(REQUEST, dependencies(audit=audit))
+
+    first, second = (record.investigation_id for record in audit.records)
+    assert first != second
+    assert first.startswith("INVEST-")

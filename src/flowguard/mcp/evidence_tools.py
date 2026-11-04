@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -7,6 +8,7 @@ from mcp import Client
 from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
+from flowguard.domain.audit import ToolCallRecord, ToolOutcome
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.graph.context import EvidenceUnavailable, Found
 from flowguard.mcp.clients import GuardedClient
@@ -28,6 +30,7 @@ class McpEvidenceTools:
         self._observability = observability
         self._operations = operations
         self._knowledge = knowledge
+        self.history: list[ToolCallRecord] = []
 
     async def search_logs(self, start_time: datetime, end_time: datetime) -> Found:
         return await self._call(
@@ -47,13 +50,35 @@ class McpEvidenceTools:
     async def _call(
         self, client: GuardedClient, name: str, arguments: dict[str, Any]
     ) -> Found:
+        started = time.perf_counter()
+
+        def record(
+            outcome: ToolOutcome, detail: str = "", found: Found | None = None
+        ) -> None:
+            self.history.append(
+                ToolCallRecord(
+                    tool=name,
+                    arguments=arguments,
+                    outcome=outcome,
+                    detail=detail,
+                    items=len(found.items) if found else 0,
+                    truncated=found.truncated if found else False,
+                    seconds=round(time.perf_counter() - started, 3),
+                )
+            )
+
         try:
             result = await client.call_tool(name, arguments)
-        except (ToolDenied, MCPError) as error:
+        except ToolDenied as error:
+            record("denied", str(error))
+            raise EvidenceUnavailable(f"{name}: {error}") from error
+        except MCPError as error:
+            record("failed", str(error))
             raise EvidenceUnavailable(f"{name}: {error}") from error
 
         if result.is_error or result.structured_content is None:
             message = " ".join(getattr(part, "text", "") for part in result.content)
+            record("failed", message)
             raise EvidenceUnavailable(f"{name} failed: {message}")
 
         # The result crossed a process boundary, so it is validated like any input.
@@ -63,8 +88,11 @@ class McpEvidenceTools:
                 for item in result.structured_content["items"]
             ]
         except (KeyError, ValidationError) as error:
+            record("failed", "malformed evidence")
             raise EvidenceUnavailable(f"{name} returned malformed evidence") from error
-        return Found(items, bool(result.structured_content.get("truncated", False)))
+        found = Found(items, bool(result.structured_content.get("truncated", False)))
+        record("ok", found=found)
+        return found
 
 
 def window(start_time: datetime, end_time: datetime) -> dict[str, Any]:

@@ -4,9 +4,9 @@ from datetime import UTC, datetime
 import pytest
 
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.hypotheses import CATEGORY_DEFINITIONS
 from flowguard.domain.incidents import Incident
 from flowguard.graph.nodes.root_cause import InvalidProposal, propose_hypotheses
-from flowguard.domain.hypotheses import CATEGORY_DEFINITIONS
 
 INCIDENT = Incident(
     incident_id="INC-001",

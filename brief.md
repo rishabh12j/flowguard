@@ -354,6 +354,8 @@ This node must be deterministic wherever possible.
 - Store tool calls, tool results, evidence IDs, model outputs, validation results, and approvals.
 - Produce a user-readable incident report.
 
+> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Still missing: full tool results, raw model output, retrieval calls (not yet through MCP), validation results, approvals, and the readable report.
+
 ---
 
 ## 11. Proposed graph routing
@@ -1160,7 +1162,7 @@ Work in this order:
 - [x] Write a deterministic Python script that solves INC-001 from the data.
 - [x] Expose the synthetic evidence through one MCP server.
 - [x] Add RAG over the runbook, API specification, and historical incident.
-- [ ] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit.
+- [x] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit. Triage became a category on each hypothesis; see section 10.
 - [ ] Add FastAPI endpoints to start and inspect an investigation.
 - [ ] Add validation and approval nodes.
 - [ ] Expand from one incident to five and build the evaluation runner.

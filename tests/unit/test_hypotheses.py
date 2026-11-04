@@ -1,13 +1,14 @@
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
 from flowguard.domain.hypotheses import (
-    HypothesisProposal,
-    ProposedHypothesis,
     CATEGORY_DEFINITIONS,
+    HypothesisProposal,
     IncidentCategory,
+    ProposedHypothesis,
 )
-from typing import get_args
 
 
 def hypothesis(**changes) -> dict:

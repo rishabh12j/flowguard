@@ -1,13 +1,14 @@
+import json
 from functools import partial
 
 import pytest
-import json
 
 from flowguard.dataset import load_incident
 from flowguard.graph.builder import investigate
 from flowguard.graph.context import Dependencies
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.rag.retrieval import retrieve
+from flowguard.storage.audit_repository import SqliteAuditStore
 
 pytestmark = pytest.mark.anyio
 
@@ -32,10 +33,17 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def state(client, embedder):
+def store():
+    return SqliteAuditStore()
+
+
+@pytest.fixture
+async def state(client, embedder, store):
     retriever = partial(retrieve, embedder=embedder, client=client)
     async with open_evidence_tools() as tools:
-        dependencies = Dependencies(retriever=retriever, tools=tools, llm=ScriptedLLM())
+        dependencies = Dependencies(
+            retriever=retriever, tools=tools, llm=ScriptedLLM(), audit=store
+        )
         return await investigate(load_incident("INC-001"), dependencies)
 
 
@@ -77,3 +85,15 @@ async def test_inc_001_scores_the_proposed_root_cause_from_real_evidence(state):
 
 async def test_inc_001_takes_the_root_cause_s_category(state):
     assert state["category"] == "schema_contract_mismatch"
+
+
+async def test_inc_001_is_saved_with_every_tool_call(state, store):
+    record = store.get(state["investigation_id"])
+
+    assert record.status == "diagnosed"
+    assert [(call.tool, call.outcome) for call in record.tool_calls] == [
+        ("search_logs", "ok"),
+        ("get_deployments", "ok"),
+        ("get_dependency_map", "ok"),
+    ]
+    assert "LOG-882" in record.evidence_ids

@@ -7,10 +7,10 @@ from pydantic import ValidationError
 from flowguard.domain.confidence import score
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import (
+    CATEGORY_DEFINITIONS,
     HypothesisProposal,
     ProposedHypothesis,
     RootCauseHypothesis,
-    CATEGORY_DEFINITIONS,
 )
 from flowguard.domain.incidents import Incident
 from flowguard.graph.context import Dependencies

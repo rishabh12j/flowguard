@@ -5,6 +5,7 @@ from mcp.types import CallToolResult, TextContent
 
 from flowguard.graph.context import EvidenceUnavailable
 from flowguard.mcp.evidence_tools import McpEvidenceTools
+from flowguard.mcp.permissions import ToolDenied
 
 pytestmark = pytest.mark.anyio
 
@@ -70,3 +71,44 @@ async def test_malformed_evidence_is_unavailable(content):
 
     with pytest.raises(EvidenceUnavailable, match="malformed"):
         await tools.search_logs(START, END)
+
+
+async def test_a_successful_call_is_recorded():
+    tools = tools_returning(structured_content={"items": [LOG], "truncated": True})
+
+    await tools.search_logs(START, END)
+
+    [call] = tools.history
+    assert call.tool == "search_logs"
+    assert call.arguments == {
+        "start_time": START.isoformat(),
+        "end_time": END.isoformat(),
+    }
+    assert (call.outcome, call.items, call.truncated) == ("ok", 1, True)
+
+
+async def test_a_failed_call_is_recorded():
+    tools = tools_returning(is_error=True)
+
+    with pytest.raises(EvidenceUnavailable):
+        await tools.search_logs(START, END)
+
+    [call] = tools.history
+    assert (call.outcome, call.detail) == ("failed", "boom")
+
+
+class DenyingClient:
+    async def call_tool(self, name, arguments):
+        raise ToolDenied(f"{name} has reached its call limit")
+
+
+async def test_a_denied_call_is_recorded():
+    client = DenyingClient()
+    tools = McpEvidenceTools(client, client, client)
+
+    with pytest.raises(EvidenceUnavailable):
+        await tools.get_dependency_map("invoice-transformer")
+
+    [call] = tools.history
+    assert call.outcome == "denied"
+    assert call.detail == "get_dependency_map has reached its call limit"

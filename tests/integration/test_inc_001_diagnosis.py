@@ -1,8 +1,8 @@
+import json
 from functools import partial
 
 import httpx
 import pytest
-import json
 
 from flowguard.dataset import DATA_DIR, load_incident
 from flowguard.graph.builder import investigate
@@ -10,6 +10,7 @@ from flowguard.graph.context import Dependencies
 from flowguard.llm.client import MODEL, OLLAMA_URL, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.rag.retrieval import retrieve
+from flowguard.storage.audit_repository import SqliteAuditStore
 
 pytestmark = [pytest.mark.llm, pytest.mark.anyio]
 
@@ -31,9 +32,12 @@ async def test_gemma_diagnoses_inc_001_end_to_end(client, embedder):
     if not model_is_available():
         pytest.skip(f"Ollama is not running with {MODEL}")
     retriever = partial(retrieve, embedder=embedder, client=client)
+    store = SqliteAuditStore()
 
     async with open_evidence_tools() as tools:
-        dependencies = Dependencies(retriever=retriever, tools=tools, llm=OllamaLLM())
+        dependencies = Dependencies(
+            retriever=retriever, tools=tools, llm=OllamaLLM(), audit=store
+        )
         state = await investigate(load_incident("INC-001"), dependencies)
 
     best = state["selected_root_cause"]
@@ -46,3 +50,4 @@ async def test_gemma_diagnoses_inc_001_end_to_end(client, embedder):
         (DATA_DIR / "ground_truth" / "INC-001.json").read_text(encoding="utf-8")
     )
     assert state["category"] == ground_truth["category"]
+    assert store.get(state["investigation_id"]).status == "diagnosed"
