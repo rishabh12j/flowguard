@@ -97,6 +97,66 @@ CATALOGUE = {
             risk="low",
             verification="Confirm the owning team has acknowledged the incident.",
         ),
+        ActionSpec(
+            name="rotate_credential",
+            purpose="replace an expired or leaked credential that a service uses, "
+            "through the secrets manager",
+            kind="mitigation",
+            target="service",
+            changes_state=True,
+            risk="high",
+            fixes_cause=True,
+            rollback="Restore the previous credential version in the secrets manager "
+            "if the provider rejects the new one.",
+            verification="Confirm a test request to the provider succeeds with the "
+            "new credential.",
+        ),
+        ActionSpec(
+            name="rerun_job",
+            purpose="run a failed scheduled job again for the periods it missed",
+            kind="mitigation",
+            target="service",
+            changes_state=True,
+            risk="medium",
+            requires_fix_first=True,
+            rollback="Stop the run and discard what it wrote to staging.",
+            verification="Confirm the job completed for every missed period, with no "
+            "duplicate records.",
+        ),
+        ActionSpec(
+            name="pause_job",
+            purpose="pause a scheduled or batch job that is overloading another service",
+            kind="mitigation",
+            target="service",
+            changes_state=True,
+            risk="medium",
+            fixes_cause=True,
+            rollback="Resume the job.",
+            verification="Confirm the overloaded service's request rate has dropped "
+            "below its limit.",
+        ),
+        ActionSpec(
+            name="enable_rate_limiting",
+            purpose="limit how fast a service sends requests to a provider, so it "
+            "stays within the provider's quota",
+            kind="corrective",
+            target="service",
+            changes_state=True,
+            risk="medium",
+            fixes_cause=True,
+            rollback="Remove the limit, returning to the previous request rate.",
+            verification="Confirm requests stay below the provider's limit and no 429 "
+            "responses occur.",
+        ),
+        ActionSpec(
+            name="add_monitoring",
+            purpose="add an alert or check that would catch this failure earlier",
+            kind="corrective",
+            target="service",
+            changes_state=False,
+            risk="low",
+            verification="Confirm the new alert or check fires in a test.",
+        ),
     )
 }
 

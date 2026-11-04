@@ -7,6 +7,8 @@ from flowguard.dataset import load_evidence
 from flowguard.rag.ingestion import COLLECTION, ingest, knowledge_chunks, point_id
 
 CHUNKS = knowledge_chunks(load_evidence())
+# Specs are split by section; runbooks and past incidents stay whole.
+EXPECTED = 14
 
 
 @pytest.fixture
@@ -24,13 +26,13 @@ def test_only_knowledge_documents_become_chunks():
         "runbook",
         "historical_incident",
     }
-    assert len(CHUNKS) == 4
+    assert len(CHUNKS) == EXPECTED
 
 
 def test_stores_one_point_per_chunk(client):
     ingest(CHUNKS, FakeEmbedder(), client)
 
-    assert count(client) == 4
+    assert count(client) == EXPECTED
 
 
 def test_collection_uses_cosine_and_the_model_size(client):
@@ -70,7 +72,7 @@ def test_ingesting_twice_does_not_duplicate(client):
     ingest(CHUNKS, FakeEmbedder(), client)
     ingest(CHUNKS, FakeEmbedder(), client)
 
-    assert count(client) == 4
+    assert count(client) == EXPECTED
 
 
 def test_a_removed_document_does_not_stay_searchable(client):
@@ -96,4 +98,4 @@ def test_a_rejected_ingest_keeps_the_existing_collection(client):
     with pytest.raises(ValueError):
         ingest(CHUNKS, embedder, client)
 
-    assert count(client) == 4
+    assert count(client) == EXPECTED

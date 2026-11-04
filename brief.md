@@ -503,6 +503,8 @@ Suggested interpretation:
 
 Tune this rubric through evaluation rather than presenting it as universally correct.
 
+> **Decided 2026-11-04:** "timeline correlation" and "dependency-path match" count any cited *change*: a deployment, an alert, or a metric that crossed its threshold, at or upstream of the failing service and within 24 hours before the first failure. The first version counted deployments only, so a cause that isn't a release (INC-002's expired credential, INC-003's burst traffic) could score at most 0.55 and was always abstained on. "Deployment correlation" (+0.10) still needs a cited deployment. A metric that never crossed its threshold isn't a change and earns nothing.
+
 ---
 
 ## 15. MCP design
@@ -1067,6 +1069,8 @@ Each seeded incident should include:
 ### Milestone 1 — Synthetic incident environment
 
 - [ ] Create five ground-truth incidents.
+
+> **Status 2026-11-04:** INC-001, INC-002 (expired bank credential, 401), and INC-003 (backfill burst, 429) exist, each with logs, deployments including decoys, a dependency map, an API spec, a runbook, a past incident, and ground truth with a `reference_plan`. INC-002 adds alerts and INC-003 adds metrics, both new data types with their own files. `test_incidents_solvable.py` proves each incident can be solved by the real graph when the model's answers are perfect.
 - [ ] Create logs, runbooks, API specs, dependency maps, and deployments.
 - [ ] Create data schemas.
 - [x] Add deterministic data loaders.

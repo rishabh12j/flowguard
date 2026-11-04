@@ -46,6 +46,12 @@ class EmptyTools:
     async def search_runbooks(self, query, system) -> Found:
         return self._record("search_runbooks")
 
+    async def search_alerts(self, start_time, end_time) -> Found:
+        return self._record("search_alerts")
+
+    async def get_metrics(self, service, start_time, end_time) -> Found:
+        return self._record("get_metrics")
+
 
 class Toolbox:
     """Opens new tools for each investigation, and keeps every set it opened."""

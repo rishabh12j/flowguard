@@ -29,6 +29,14 @@ class EvidenceTools(Protocol):
 
     async def get_dependency_map(self, service: str) -> Found: ...
 
+    async def search_alerts(
+        self, start_time: datetime, end_time: datetime
+    ) -> Found: ...
+
+    async def get_metrics(
+        self, service: str, start_time: datetime, end_time: datetime
+    ) -> Found: ...
+
     async def search_runbooks(self, query: str, system: str) -> Found: ...
 
 

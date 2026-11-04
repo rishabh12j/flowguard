@@ -5,7 +5,12 @@ from flowguard.dataset import DATA_DIR, load_evidence, load_incident
 
 EVIDENCE = load_evidence()
 BY_ID = {item.evidence_id: item for item in EVIDENCE}
-LOGS = [item for item in EVIDENCE if item.source_type == "log"]
+# INC-001's system. Other incidents' logs live in their own files.
+LOGS = [
+    item
+    for item in EVIDENCE
+    if item.source_type == "log" and item.metadata["system"] == "invoice-processing"
+]
 INCIDENT = load_incident("INC-001")
 GROUND_TRUTH = json.loads(
     (DATA_DIR / "ground_truth" / "INC-001.json").read_text(encoding="utf-8")

@@ -67,6 +67,16 @@
 - Every piece of evidence now comes through MCP, so retrieval has a call limit (3 per investigation), is redacted on arrival, and appears in the audit's tool calls. The graph's separate retriever is gone.
 - The knowledge server is built with the search function passed in, so the slow embedder is loaded once by the API. `open_evidence_tools` requires it, so the investigation can't be wired up without document search.
 - A failed document search is recorded in `errors` and counts as a missing source, in the first round and in a reviewer's follow-up. The investigation goes ahead with the evidence it has.
+- Added alerts and metrics as evidence. Alerts are loaded from `data/alerts/`, metrics from `data/metrics/`. A metric becomes one piece of evidence per period, timed at the moment it first crossed its threshold.
+- The observability server gained `search_alerts`, `get_alert`, and `get_metrics`. `get_metrics` takes `metric_names` as optional, unlike the brief, so the graph can ask for everything a service records.
+- `dependency_trace` now gathers alerts and metrics alongside deployments, from the same 24 hours and the same services at or upstream of the failure. One tool failing loses only its own evidence.
+- The confidence rubric's timeline and path signals now count any cited change: a deployment, an alert, or a metric that crossed its threshold. Before, a cause that wasn't a deployment could never reach 0.65. The reasons are recorded under the rubric in the brief.
+- Added INC-002 (an expired bank API credential causes 401s) and INC-003 (a backfill pushes requests past the carrier's 100 a minute, causing 429s), each with logs, decoy deployments, a dependency map, an API spec, a runbook, a past incident, and ground truth.
+- Ground truth now includes a `reference_plan`, including for INC-001.
+- Added five catalogue actions: `rotate_credential`, `rerun_job`, `pause_job`, `enable_rate_limiting`, and `add_monitoring`.
+- Logs and deployments now record which system they belong to.
+- Replaced `test_inc_001_solvable.py`, a hand-written solver, with `test_incidents_solvable.py`. It runs every incident through the real graph, MCP servers, and retrieval, with an oracle model that cites the ground truth. It must gather the required evidence, select the right category, and get the reference plan through validation.
+- Fixed in review: a metric that never crossed its threshold still earned the path signal. It isn't a change, so it now earns nothing.
 
 ## 2026-11-03
 

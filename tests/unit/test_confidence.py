@@ -109,8 +109,8 @@ def test_inc_001_root_cause_scores_high():
     assert result == 0.90
     assert reason == (
         "+0.30 cites an error log; "
-        "+0.20 a cited deployment came before the first failure; "
-        "+0.15 a cited deployment is upstream of the failure; "
+        "+0.20 a cited change came before the first failure; "
+        "+0.15 a cited change is at or upstream of the failure; "
         "+0.15 cites an API specification; "
         "+0.10 cites a deployment"
     )
@@ -170,3 +170,39 @@ def test_a_hypothesis_with_no_signals_says_so():
     assert (
         score(hypothesis("LOG-883"), EVIDENCE, FAILURE, 0)[1] == "no supporting signals"
     )
+
+
+EXPIRY_ALERT = item(
+    "ALERT-1",
+    "alert",
+    service="supplier-api",
+    at=FAILED_AT - timedelta(hours=9),
+)
+SPIKE = item(
+    "METRIC-1",
+    "metric",
+    service="invoice-transformer",
+    at=FAILED_AT - timedelta(minutes=2),
+)
+CALM = item("METRIC-2", "metric", service="invoice-transformer", at=None)
+EVIDENCE.update({change.evidence_id: change for change in (EXPIRY_ALERT, SPIKE, CALM)})
+
+
+def test_an_alert_before_the_failure_counts_as_a_change():
+    # Error, timeline, and path, but not the deployment signal.
+    assert confidence("LOG-882", "ALERT-1") == 0.65
+
+
+def test_a_metric_crossing_its_threshold_counts_as_a_change():
+    assert confidence("LOG-882", "METRIC-1", SPEC.evidence_id) == 0.80
+
+
+def test_a_metric_that_never_crossed_its_threshold_is_no_change():
+    assert confidence("LOG-882", "METRIC-2") == 0.30
+
+
+def test_only_a_deployment_earns_the_deployment_signal():
+    _, reason = score(hypothesis("LOG-882", "ALERT-1"), EVIDENCE, FAILURE, 0)
+
+    assert "cites a deployment" not in reason
+    assert "a cited change came before the first failure" in reason

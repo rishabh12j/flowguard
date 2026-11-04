@@ -4,6 +4,10 @@ from flowguard.domain.causality import came_before, services_at_or_upstream
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import ProposedHypothesis
 
+# Evidence of something changing: a release, an alert, or a metric that crossed
+# its threshold. Any of them can explain a failure that came after it.
+CHANGE_TYPES = ("deployment", "alert", "metric")
+
 # The brief's starting rubric. Tune it with the evaluation runner, not by hand.
 DIRECT_ERROR = 0.30
 TIMELINE = 0.20
@@ -24,18 +28,23 @@ def score(
     cited = [
         evidence[evidence_id] for evidence_id in hypothesis.supporting_evidence_ids
     ]
-    deployments = [item for item in cited if item.source_type == "deployment"]
+    # A metric that never crossed its threshold has no timestamp: nothing changed.
+    changes = [
+        item
+        for item in cited
+        if item.source_type in CHANGE_TYPES and item.timestamp is not None
+    ]
     maps = [item for item in evidence.values() if item.source_type == "dependency_map"]
 
     timeline = path = False
     if first_failure is not None:
-        timeline = any(came_before(item, first_failure) for item in deployments)
+        timeline = any(came_before(item, first_failure) for item in changes)
         upstream: set[str] = set()
         for dependency_map in maps:
             upstream |= services_at_or_upstream(
                 dependency_map, first_failure.source_name
             )
-        path = any(item.source_name in upstream for item in deployments)
+        path = any(item.source_name in upstream for item in changes)
 
     signals = [
         (
@@ -46,14 +55,18 @@ def score(
                 for item in cited
             ),
         ),
-        (TIMELINE, "a cited deployment came before the first failure", timeline),
-        (DEPENDENCY_PATH, "a cited deployment is upstream of the failure", path),
+        (TIMELINE, "a cited change came before the first failure", timeline),
+        (DEPENDENCY_PATH, "a cited change is at or upstream of the failure", path),
         (
             API_OR_SCHEMA,
             "cites an API specification",
             any(item.source_type == "api_spec" for item in cited),
         ),
-        (DEPLOYMENT, "cites a deployment", bool(deployments)),
+        (
+            DEPLOYMENT,
+            "cites a deployment",
+            any(item.source_type == "deployment" for item in cited),
+        ),
         (
             HISTORICAL_MATCH,
             "cites a similar past incident",

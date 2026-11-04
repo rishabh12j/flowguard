@@ -110,8 +110,8 @@ async def test_inc_001_scores_the_proposed_root_cause_from_real_evidence(state):
     assert best.confidence == 0.75
     assert best.confidence_reason == (
         "+0.30 cites an error log; "
-        "+0.20 a cited deployment came before the first failure; "
-        "+0.15 a cited deployment is upstream of the failure; "
+        "+0.20 a cited change came before the first failure; "
+        "+0.15 a cited change is at or upstream of the failure; "
         "+0.10 cites a deployment"
     )
 
@@ -138,6 +138,11 @@ async def test_inc_001_is_saved_with_every_tool_call(state, store):
     assert sorted((call.tool, call.outcome) for call in record.tool_calls) == [
         ("get_dependency_map", "ok"),
         ("get_deployments", "ok"),
+        # Once for each service at or upstream of invoice-transformer.
+        ("get_metrics", "ok"),
+        ("get_metrics", "ok"),
+        ("get_metrics", "ok"),
+        ("search_alerts", "ok"),
         ("search_logs", "ok"),
         ("search_runbooks", "ok"),
     ]

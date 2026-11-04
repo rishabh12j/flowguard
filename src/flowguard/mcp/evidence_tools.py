@@ -38,6 +38,20 @@ class McpEvidenceTools:
             self._observability, "search_logs", window(start_time, end_time)
         )
 
+    async def search_alerts(self, start_time: datetime, end_time: datetime) -> Found:
+        return await self._call(
+            self._observability, "search_alerts", window(start_time, end_time)
+        )
+
+    async def get_metrics(
+        self, service: str, start_time: datetime, end_time: datetime
+    ) -> Found:
+        return await self._call(
+            self._observability,
+            "get_metrics",
+            {"service": service, **window(start_time, end_time)},
+        )
+
     async def get_deployments(self, start_time: datetime, end_time: datetime) -> Found:
         return await self._call(
             self._operations, "get_deployments", window(start_time, end_time)

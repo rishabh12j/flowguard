@@ -105,7 +105,8 @@ def test_never_returns_a_stale_document(client, embedder):
     results = retrieve(STALE.text, embedder, client, system=SYSTEM, min_score=0)
 
     assert STALE.chunk_id not in ids(results)
-    assert len(results) == len(CHUNKS)
+    # Every current document for the system, and nothing else.
+    assert len(results) == len([c for c in CHUNKS if c.system == SYSTEM])
 
 
 def test_stale_documents_do_not_use_up_the_limit(client, embedder):

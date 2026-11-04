@@ -148,6 +148,8 @@ class FakeTools:
         deployments: tuple[EvidenceItem, ...] = (),
         maps: tuple[EvidenceItem, ...] = (),
         *,
+        alerts: tuple[EvidenceItem, ...] = (),
+        metrics: tuple[EvidenceItem, ...] = (),
         truncated: bool = False,
         failing: str | None = None,
     ) -> None:
@@ -155,7 +157,9 @@ class FakeTools:
             "search_logs": Found(list(logs), truncated),
             "get_deployments": Found(list(deployments)),
             "get_dependency_map": Found(list(maps)),
+            "search_alerts": Found(list(alerts)),
         }
+        self.metrics = metrics
         self.failing = failing
         # Documents come through the tools too, as they do through MCP.
         self.retriever = FakeRetriever()
@@ -176,6 +180,15 @@ class FakeTools:
 
     async def get_dependency_map(self, service) -> Found:
         return self._answer("get_dependency_map", service)
+
+    async def search_alerts(self, start_time, end_time) -> Found:
+        return self._answer("search_alerts", start_time, end_time)
+
+    async def get_metrics(self, service, start_time, end_time) -> Found:
+        self.calls.append(("get_metrics", service, start_time, end_time))
+        if self.failing == "get_metrics":
+            raise EvidenceUnavailable("get_metrics: timed out")
+        return Found([item for item in self.metrics if item.source_name == service])
 
     async def search_runbooks(self, query, system) -> Found:
         self.calls.append(("search_runbooks", query, system))
@@ -1029,3 +1042,81 @@ async def test_a_failed_follow_up_search_is_a_missing_source():
     # The round went ahead, a source short: 0.90 less 0.15.
     assert latest.status == "awaiting_approval"
     assert latest.hypotheses[0].confidence == 0.75
+
+
+def alert(evidence_id: str, at: datetime, service: str) -> EvidenceItem:
+    return EvidenceItem(
+        evidence_id=evidence_id,
+        source_type="alert",
+        source_name=service,
+        timestamp=at,
+        title="An alert fired",
+        content="Something crossed a limit.",
+        metadata={"severity": "warning"},
+    )
+
+
+def metric(evidence_id: str, service: str) -> EvidenceItem:
+    return EvidenceItem(
+        evidence_id=evidence_id,
+        source_type="metric",
+        source_name=service,
+        timestamp=FAILURE.timestamp - timedelta(minutes=5),
+        title=f"{service} requests",
+        content="Requests went above the threshold.",
+        metadata={"threshold": 100},
+    )
+
+
+async def test_alerts_at_or_upstream_of_the_failure_become_evidence():
+    before = FAILURE.timestamp - timedelta(hours=1)
+    tools = full_tools(
+        alerts=(
+            alert("ALERT-1", before, "supplier-api"),
+            alert("ALERT-2", before, "invoice-workflow"),
+        )
+    )
+
+    state = await run(tools=tools)
+
+    assert "ALERT-1" in ids(state)
+    assert "ALERT-2" not in ids(state)
+    [(start, end)] = called(tools, "search_alerts")
+    assert (start, end) == (FAILURE.timestamp - timedelta(hours=24), FAILURE.timestamp)
+
+
+async def test_metrics_are_asked_for_the_failing_service_and_upstream():
+    tools = full_tools(
+        metrics=(
+            metric("METRIC-1", "invoice-transformer"),
+            metric("METRIC-2", "invoice-workflow"),
+        )
+    )
+
+    state = await run(tools=tools)
+
+    assert sorted(call[0] for call in called(tools, "get_metrics")) == [
+        "invoice-transformer",
+        "supplier-api",
+    ]
+    assert "METRIC-1" in ids(state)
+    assert "METRIC-2" not in ids(state)
+
+
+async def test_a_failing_metrics_tool_keeps_the_other_changes():
+    state = await run(tools=full_tools(failing="get_metrics"))
+
+    assert "DEPLOY-SOURCE-221" in ids(state)
+    assert state["errors"].count("dependency_trace: get_metrics: timed out") == 2
+
+
+async def test_an_alert_can_support_a_diagnosis_without_a_deployment():
+    expiry = alert("ALERT-1", FAILURE.timestamp - timedelta(hours=6), "supplier-api")
+    llm = FakeLLM(proposal("LOG-882", "ALERT-1", SPEC.evidence_id))
+
+    state = await run(
+        retriever=FakeRetriever(SPEC), tools=full_tools(alerts=(expiry,)), llm=llm
+    )
+
+    # 0.30 error + 0.20 timeline + 0.15 path + 0.15 specification.
+    assert state["selected_root_cause"].confidence == 0.80

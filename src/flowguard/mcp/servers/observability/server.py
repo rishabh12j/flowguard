@@ -8,16 +8,28 @@ from pydantic import AwareDatetime, BaseModel
 
 from flowguard.dataset import load_evidence
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.metrics import within
 
 MAX_RESULTS = 50
 
 server = MCPServer("observability-server")
-LOGS = [item for item in load_evidence() if item.source_type == "log"]
+EVIDENCE = load_evidence()
+LOGS = [item for item in EVIDENCE if item.source_type == "log"]
+ALERTS = [item for item in EVIDENCE if item.source_type == "alert"]
+METRICS = [item for item in EVIDENCE if item.source_type == "metric"]
 
 
 class LogSearchResult(BaseModel):
     items: list[EvidenceItem]
     truncated: bool
+
+
+class AlertResult(BaseModel):
+    items: list[EvidenceItem]
+
+
+class MetricResult(BaseModel):
+    items: list[EvidenceItem]
 
 
 def log_time(item: EvidenceItem) -> datetime:
@@ -63,6 +75,73 @@ def search_logs(
     return LogSearchResult(
         items=matches[:MAX_RESULTS], truncated=len(matches) > MAX_RESULTS
     )
+
+
+def fired_at(item: EvidenceItem) -> datetime:
+    if item.timestamp is None:
+        raise ValueError(f"{item.evidence_id} has no timestamp")
+    return item.timestamp
+
+
+@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+def search_alerts(
+    start_time: AwareDatetime, end_time: AwareDatetime, service: str | None = None
+) -> AlertResult:
+    """List the alerts that fired within a required time range, oldest first.
+
+    Filter by service to see one service's alerts. An empty result means no
+    alerts fired in that range.
+    """
+    if end_time < start_time:
+        raise ToolError("end_time must not be before start_time")
+
+    matches = [
+        item
+        for item in ALERTS
+        if start_time <= fired_at(item) <= end_time
+        and (service is None or item.source_name == service)
+    ]
+    return AlertResult(items=sorted(matches, key=fired_at))
+
+
+@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+def get_alert(alert_id: str) -> AlertResult:
+    """Get one alert by its ID. An empty result means no alert has that ID."""
+    if not alert_id.strip():
+        raise ToolError("alert_id must not be blank")
+
+    return AlertResult(items=[item for item in ALERTS if item.evidence_id == alert_id])
+
+
+@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+def get_metrics(
+    service: str,
+    start_time: AwareDatetime,
+    end_time: AwareDatetime,
+    metric_names: list[str] | None = None,
+) -> MetricResult:
+    """Get a service's metrics within a required time range.
+
+    Each result summarises one metric over the range: its peak, its threshold,
+    and when it first went above the threshold, if it did. Without
+    metric_names, every metric recorded for the service is returned. An empty
+    result means no metrics were recorded for the service in that range.
+    """
+    if not service.strip():
+        raise ToolError("service must not be blank")
+    if end_time < start_time:
+        raise ToolError("end_time must not be before start_time")
+
+    found = []
+    for item in METRICS:
+        if item.source_name != service:
+            continue
+        if metric_names is not None and item.metadata["metric"] not in metric_names:
+            continue
+        summary = within(item, start_time, end_time)
+        if summary is not None:
+            found.append(summary)
+    return MetricResult(items=found)
 
 
 if __name__ == "__main__":

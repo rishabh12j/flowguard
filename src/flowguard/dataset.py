@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from flowguard.domain.evidence import EvidenceItem, SourceType
+from flowguard.domain.metrics import metric_evidence
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -21,9 +22,19 @@ def load_evidence(data_dir: Path = DATA_DIR) -> list[EvidenceItem]:
     return [
         *_load_logs(data_dir),
         *_load_deployments(data_dir),
+        *_load_alerts(data_dir),
+        *_load_metrics(data_dir),
         *_load_dependency_maps(data_dir),
         *_load_documents(data_dir),
     ]
+
+
+def load_ground_truth(incident_id: str, data_dir: Path = DATA_DIR) -> dict[str, Any]:
+    return _read_json(data_dir / "ground_truth" / f"{incident_id}.json")
+
+
+def incident_ids(data_dir: Path = DATA_DIR) -> list[str]:
+    return sorted(path.stem for path in (data_dir / "incidents").glob("*.json"))
 
 
 def _read_json(path: Path) -> Any:
@@ -34,11 +45,11 @@ def _load_logs(data_dir: Path) -> list[EvidenceItem]:
     items = []
     for path in sorted((data_dir / "logs").glob("*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
-            items.append(_log_to_evidence(json.loads(line)))
+            items.append(_log_to_evidence(json.loads(line), system=path.stem))
     return items
 
 
-def _log_to_evidence(event: dict[str, Any]) -> EvidenceItem:
+def _log_to_evidence(event: dict[str, Any], system: str) -> EvidenceItem:
     return EvidenceItem(
         evidence_id=event["event_id"],
         source_type="log",
@@ -50,6 +61,8 @@ def _log_to_evidence(event: dict[str, Any]) -> EvidenceItem:
             "level": event["level"],
             "environment": event["environment"],
             "exception_type": event["exception_type"],
+            # Each file holds one system's logs.
+            "system": system,
             **event["metadata"],
         },
         correlation_id=event["correlation_id"],
@@ -68,9 +81,44 @@ def _load_deployments(data_dir: Path) -> list[EvidenceItem]:
                     timestamp=record["timestamp"],
                     title=f"{record['service']} {record['version']} deployment",
                     content="\n".join(record["changes"]),
-                    metadata={"version": record["version"], "status": record["status"]},
+                    metadata={
+                        "version": record["version"],
+                        "status": record["status"],
+                        "system": path.stem,
+                    },
                 )
             )
+    return items
+
+
+def _load_alerts(data_dir: Path) -> list[EvidenceItem]:
+    items = []
+    for path in sorted((data_dir / "alerts").glob("*.json")):
+        for record in _read_json(path):
+            items.append(
+                EvidenceItem(
+                    evidence_id=record["alert_id"],
+                    source_type="alert",
+                    source_name=record["service"],
+                    timestamp=record["fired_at"],
+                    title=record["title"],
+                    content=record["description"],
+                    metadata={
+                        "severity": record["severity"],
+                        "status": record["status"],
+                    },
+                )
+            )
+    return items
+
+
+def _load_metrics(data_dir: Path) -> list[EvidenceItem]:
+    items = []
+    for path in sorted((data_dir / "metrics").glob("*.json")):
+        for record in _read_json(path):
+            item = metric_evidence(**record)
+            if item is not None:
+                items.append(item)
     return items
 
 

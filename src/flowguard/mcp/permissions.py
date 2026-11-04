@@ -40,6 +40,10 @@ POLICIES = {
     policy.name: policy
     for policy in (
         read_policy("search_logs", max_calls=10),
+        read_policy("search_alerts", max_calls=5),
+        read_policy("get_alert", max_calls=5),
+        # One call per service at or upstream of the failure.
+        read_policy("get_metrics", max_calls=10),
         read_policy("get_deployments", max_calls=5),
         read_policy("get_dependency_map", max_calls=5),
         read_policy("get_api_spec", max_calls=5),
