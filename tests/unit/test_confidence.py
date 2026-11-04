@@ -89,6 +89,7 @@ def hypothesis(*supporting: str, contradicting: tuple[str, ...] = ()):
         supporting_evidence_ids=supporting,
         contradicting_evidence_ids=contradicting,
         missing_evidence=(),
+        category="schema_contract_mismatch",
     )
 
 

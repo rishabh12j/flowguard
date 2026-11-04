@@ -21,6 +21,7 @@ class ScriptedLLM:
             "supporting_evidence_ids": ["LOG-882", "DEPLOY-SOURCE-221"],
             "contradicting_evidence_ids": [],
             "missing_evidence": [],
+            "category": "schema_contract_mismatch",
         }
         return json.dumps({"hypotheses": [hypothesis]})
 
@@ -72,3 +73,7 @@ async def test_inc_001_scores_the_proposed_root_cause_from_real_evidence(state):
         "+0.15 a cited deployment is upstream of the failure; "
         "+0.10 cites a deployment"
     )
+
+
+async def test_inc_001_takes_the_root_cause_s_category(state):
+    assert state["category"] == "schema_contract_mismatch"

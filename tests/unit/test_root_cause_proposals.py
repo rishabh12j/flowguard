@@ -6,6 +6,7 @@ import pytest
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.incidents import Incident
 from flowguard.graph.nodes.root_cause import InvalidProposal, propose_hypotheses
+from flowguard.domain.hypotheses import CATEGORY_DEFINITIONS
 
 INCIDENT = Incident(
     incident_id="INC-001",
@@ -40,6 +41,7 @@ def hypothesis(*supporting: str, contradicting: tuple[str, ...] = ()) -> dict:
         "supporting_evidence_ids": list(supporting),
         "contradicting_evidence_ids": list(contradicting),
         "missing_evidence": [],
+        "category": "schema_contract_mismatch",
     }
 
 
@@ -146,3 +148,41 @@ def test_no_evidence_means_no_model_call():
     with pytest.raises(ValueError, match="no evidence"):
         propose_hypotheses(INCIDENT, [], llm)
     assert llm.calls == []
+
+
+def test_schema_limits_the_category_to_the_brief_s_list():
+    llm = FakeLLM(hypothesis("LOG-882"))
+
+    propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    assert schema_fields(llm)["category"]["enum"] == [
+        "authentication",
+        "authorisation",
+        "schema_contract_mismatch",
+        "networking",
+        "timeout",
+        "rate_limiting",
+        "data_quality",
+        "file_transfer",
+        "queue_or_event_processing",
+        "deployment_or_configuration",
+        "unknown",
+    ]
+
+
+def test_prompt_asks_for_the_category_of_what_failed():
+    llm = FakeLLM(hypothesis("LOG-882"))
+
+    propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    assert "category of what failed, not of the change" in llm.calls[0][0]
+
+
+def test_prompt_defines_every_category():
+    llm = FakeLLM(hypothesis("LOG-882"))
+
+    propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    system = llm.calls[0][0]
+    for name, meaning in CATEGORY_DEFINITIONS.items():
+        assert f"- {name}: {meaning}" in system

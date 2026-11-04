@@ -2,8 +2,9 @@ from functools import partial
 
 import httpx
 import pytest
+import json
 
-from flowguard.dataset import load_incident
+from flowguard.dataset import DATA_DIR, load_incident
 from flowguard.graph.builder import investigate
 from flowguard.graph.context import Dependencies
 from flowguard.llm.client import MODEL, OLLAMA_URL, OllamaLLM
@@ -40,3 +41,8 @@ async def test_gemma_diagnoses_inc_001_end_to_end(client, embedder):
     cited = {evidence_id.split("#")[0] for evidence_id in best.supporting_evidence_ids}
     assert {"LOG-882", "SPEC-INVOICE-V3", "DEPLOY-SOURCE-221"} <= cited
     assert best.confidence >= 0.85
+
+    ground_truth = json.loads(
+        (DATA_DIR / "ground_truth" / "INC-001.json").read_text(encoding="utf-8")
+    )
+    assert state["category"] == ground_truth["category"]

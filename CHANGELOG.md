@@ -16,6 +16,9 @@
 - Each source that failed or was cut short lowers confidence by 0.15.
 - Moved the 24-hour lookback and the dependency-map walk into `domain/causality.py`, so evidence gathering and scoring use the same rule.
 - With `gemma4:12b`, the graph now diagnoses INC-001 end to end. The rubric score isn't yet a measured accuracy.
+- Each hypothesis now carries one of the brief's 11 incident categories, limited by the schema, and the incident takes the selected root cause's category, or `unknown` when FlowGuard abstains. This replaces a separate triage node. The reasons are recorded in the brief.
+- The prompt defines every category. Without definitions, Gemma labelled INC-001 `data_quality` in 3 of 3 runs; with them, `schema_contract_mismatch` in 3 of 3, matching the ground truth.
+- Known gap: the confidence rubric only rewards citations, so citing everything can only raise a score. Evidence precision in the evaluation runner should drive the fix.
 
 ## 2026-11-03
 

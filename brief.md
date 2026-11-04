@@ -276,6 +276,8 @@ LangGraph owns the investigation state and routing. Each node must have a narrow
 - Define initial search terms.
 - Record uncertainty.
 
+**Decided 2026-11-04:** there is no separate triage node for now. Before evidence is gathered, FlowGuard has only the description, and INC-001's description doesn't show the schema problem that its logs do. The evidence nodes don't use a plan or search terms yet, so a triage call would add about 50 seconds for a guess that nothing uses. Instead, each hypothesis carries one of the categories below, limited by the schema, and the incident takes the selected root cause's category. When FlowGuard abstains, the category is `unknown`. Revisit this if evidence gathering starts to need a plan.
+
 Possible categories:
 
 - Authentication
@@ -1084,7 +1086,7 @@ Each seeded incident should include:
 ### Milestone 4 — LangGraph investigation workflow
 
 - [x] Define typed graph state.
-- [ ] Implement intake and triage.
+- [x] Implement intake and triage. Triage became a category on each hypothesis; see section 10.
 - [x] Implement log analysis.
 - [x] Implement dependency tracing.
 - [x] Implement runbook retrieval.

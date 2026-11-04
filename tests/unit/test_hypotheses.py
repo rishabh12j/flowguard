@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from flowguard.domain.hypotheses import HypothesisProposal, ProposedHypothesis
+from flowguard.domain.hypotheses import (
+    HypothesisProposal,
+    ProposedHypothesis,
+    CATEGORY_DEFINITIONS,
+    IncidentCategory,
+)
+from typing import get_args
 
 
 def hypothesis(**changes) -> dict:
@@ -10,6 +16,7 @@ def hypothesis(**changes) -> dict:
         "supporting_evidence_ids": ["LOG-882"],
         "contradicting_evidence_ids": [],
         "missing_evidence": [],
+        "category": "schema_contract_mismatch",
         **changes,
     }
 
@@ -46,3 +53,20 @@ def test_rejects_a_confidence_from_the_model():
 def test_a_proposal_has_one_to_three_hypotheses(count):
     with pytest.raises(ValidationError, match="hypotheses"):
         HypothesisProposal.model_validate({"hypotheses": [hypothesis()] * count})
+
+
+def test_rejects_a_category_outside_the_list():
+    with pytest.raises(ValidationError, match="category"):
+        ProposedHypothesis.model_validate(hypothesis(category="database"))
+
+
+def test_needs_a_category():
+    proposed = hypothesis()
+    del proposed["category"]
+
+    with pytest.raises(ValidationError, match="category"):
+        ProposedHypothesis.model_validate(proposed)
+
+
+def test_every_category_has_a_definition():
+    assert set(CATEGORY_DEFINITIONS) == set(get_args(IncidentCategory))

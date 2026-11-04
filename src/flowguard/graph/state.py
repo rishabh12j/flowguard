@@ -3,7 +3,7 @@ from typing import Annotated, Any, TypedDict
 
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.incidents import Incident
-from flowguard.domain.hypotheses import RootCauseHypothesis
+from flowguard.domain.hypotheses import IncidentCategory, RootCauseHypothesis
 
 
 class InvestigationState(TypedDict, total=False):
@@ -13,6 +13,9 @@ class InvestigationState(TypedDict, total=False):
     first_failure: EvidenceItem
     hypotheses: tuple[RootCauseHypothesis, ...]
     selected_root_cause: RootCauseHypothesis
+    # The selected root cause's category, or unknown when FlowGuard abstains.
+    category: IncidentCategory
+
     # Why no root cause was selected. Abstaining is a result, not an error.
     abstention: str
 

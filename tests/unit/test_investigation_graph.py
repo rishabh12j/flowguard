@@ -61,9 +61,14 @@ def deployment(evidence_id: str, at: datetime, service: str) -> EvidenceItem:
     )
 
 
-def proposal(*supporting: str, contradicting: tuple[str, ...] = ()) -> dict:
+def proposal(
+    *supporting: str,
+    contradicting: tuple[str, ...] = (),
+    category: str = "schema_contract_mismatch",
+) -> dict:
     return {
         "description": "supplier-api now sends camelCase fields.",
+        "category": category,
         "supporting_evidence_ids": list(supporting),
         "contradicting_evidence_ids": list(contradicting),
         "missing_evidence": [],
@@ -434,3 +439,37 @@ async def test_root_cause_runs_once_with_evidence_from_every_branch():
     assert "ID: LOG-882" in prompt
     assert f"ID: {SPEC.evidence_id}" in prompt
     assert "ID: DEPLOY-SOURCE-221" in prompt
+
+
+async def test_the_incident_takes_the_selected_root_cause_s_category():
+    llm = FakeLLM(
+        proposal("LOG-882", category="data_quality"),
+        proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id),
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert state["category"] == "schema_contract_mismatch"
+
+
+async def test_a_low_scoring_hypothesis_leaves_the_category_unknown():
+    llm = FakeLLM(proposal("LOG-882", category="networking"))
+
+    state = await run(tools=full_tools(), llm=llm)
+
+    assert state["hypotheses"][0].category == "networking"
+    assert state["category"] == "unknown"
+
+
+async def test_a_failed_model_leaves_the_category_unknown():
+    llm = FakeLLM(error=LLMError("gemma4:12b failed with 500"))
+
+    state = await run(tools=full_tools(), llm=llm)
+
+    assert state["category"] == "unknown"
+
+
+async def test_no_evidence_leaves_the_category_unknown():
+    state = await run()
+
+    assert state["category"] == "unknown"
