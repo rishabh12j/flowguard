@@ -6,7 +6,7 @@ from mcp.shared.exceptions import MCPError
 
 from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import POLICIES, ToolDenied, ToolGuard, read_policy
-from flowguard.mcp.servers.knowledge.server import server as knowledge
+from flowguard.mcp.servers.knowledge.server import create_server
 from flowguard.mcp.servers.observability.server import server as observability
 from flowguard.mcp.servers.operations.server import server as operations
 
@@ -109,6 +109,8 @@ async def test_a_slow_tool_times_out():
 
 
 async def test_every_server_tool_has_a_policy():
+    # The knowledge server as an investigation builds it, with document search.
+    knowledge = create_server(lambda query, *, system, limit: [])
     names = set()
     for server in (observability, operations, knowledge):
         async with Client(server) as client:

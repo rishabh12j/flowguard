@@ -14,7 +14,7 @@ from flowguard.domain.redaction import redact_evidence
 from flowguard.graph.context import EvidenceUnavailable, Found
 from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import ToolDenied, ToolGuard
-from flowguard.mcp.servers.knowledge.server import server as knowledge
+from flowguard.mcp.servers.knowledge.server import DocumentSearch, create_server
 from flowguard.mcp.servers.observability.server import server as observability
 from flowguard.mcp.servers.operations.server import server as operations
 
@@ -46,6 +46,11 @@ class McpEvidenceTools:
     async def get_dependency_map(self, service: str) -> Found:
         return await self._call(
             self._knowledge, "get_dependency_map", {"service": service}
+        )
+
+    async def search_runbooks(self, query: str, system: str) -> Found:
+        return await self._call(
+            self._knowledge, "search_runbooks", {"query": query, "system": system}
         )
 
     async def _call(
@@ -103,14 +108,17 @@ def window(start_time: datetime, end_time: datetime) -> dict[str, Any]:
 
 @asynccontextmanager
 async def open_evidence_tools(
+    search: DocumentSearch,
     guard: ToolGuard | None = None,
 ) -> AsyncIterator[McpEvidenceTools]:
+    # The search is required, so the investigation can't be wired up without a way
+    # to find documents. It's shared, because loading the embedder is slow.
     # One guard is shared by every server, so the investigation has one record of its calls.
     guard = guard or ToolGuard()
     async with (
         Client(observability) as observability_client,
         Client(operations) as operations_client,
-        Client(knowledge) as knowledge_client,
+        Client(create_server(search)) as knowledge_client,
     ):
         yield McpEvidenceTools(
             GuardedClient(observability_client, guard),

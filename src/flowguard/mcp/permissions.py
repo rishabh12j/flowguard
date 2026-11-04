@@ -43,6 +43,8 @@ POLICIES = {
         read_policy("get_deployments", max_calls=5),
         read_policy("get_dependency_map", max_calls=5),
         read_policy("get_api_spec", max_calls=5),
+        # One search per round: the first, and a reviewer's follow-up.
+        read_policy("search_runbooks", max_calls=3),
     )
 }
 

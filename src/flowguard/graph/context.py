@@ -17,10 +17,6 @@ class Found(NamedTuple):
     truncated: bool = False
 
 
-class Retriever(Protocol):
-    def __call__(self, query: str, *, system: str) -> list[EvidenceItem]: ...
-
-
 class EvidenceTools(Protocol):
     # Every call made through these tools, in order, for the audit.
     history: list[ToolCallRecord]
@@ -33,6 +29,8 @@ class EvidenceTools(Protocol):
 
     async def get_dependency_map(self, service: str) -> Found: ...
 
+    async def search_runbooks(self, query: str, system: str) -> Found: ...
+
 
 class AuditStore(Protocol):
     def save(self, record: InvestigationRecord) -> None: ...
@@ -40,7 +38,7 @@ class AuditStore(Protocol):
 
 @dataclass(frozen=True)
 class Dependencies:
-    retriever: Retriever
+    # Every piece of evidence comes through these tools, and so through MCP.
     tools: EvidenceTools
     llm: LLM
     audit: AuditStore

@@ -63,6 +63,10 @@
 - Fixed: every error counted as a missing evidence source, so a failed plan in one round would have lowered the next round's confidence. Only errors from evidence-gathering nodes count now.
 - Fixed: a checkpoint stores tuples as lists, so adding evidence after a resume failed with `TypeError`. The state's reducers now accept both.
 - The audit record gains `evidence_round` and `reviewer_request`.
+- Document retrieval now goes through MCP: the knowledge server has a `search_runbooks` tool (the brief's name), which searches current runbooks, API specifications, and past incidents for one system. `top_k` is limited to 1–10.
+- Every piece of evidence now comes through MCP, so retrieval has a call limit (3 per investigation), is redacted on arrival, and appears in the audit's tool calls. The graph's separate retriever is gone.
+- The knowledge server is built with the search function passed in, so the slow embedder is loaded once by the API. `open_evidence_tools` requires it, so the investigation can't be wired up without document search.
+- A failed document search is recorded in `errors` and counts as a missing source, in the first round and in a reviewer's follow-up. The investigation goes ahead with the evidence it has.
 
 ## 2026-11-03
 

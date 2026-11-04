@@ -3,7 +3,7 @@ from mcp import Client
 
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.mcp.servers.knowledge import server as module
-from flowguard.mcp.servers.knowledge.server import server
+from flowguard.mcp.servers.knowledge.server import create_server, server
 
 pytestmark = pytest.mark.anyio
 
@@ -144,3 +144,59 @@ async def test_rejects_a_blank_version():
 
     assert result.is_error is True
     assert "version" in result.content[0].text
+
+
+class RecordingSearch:
+    """Returns one fixed document and records how it was asked."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
+    def __call__(self, query, *, system, limit):
+        self.calls.append((query, system, limit))
+        return [module.API_SPECS[0]]
+
+
+async def search(search_function, **arguments):
+    async with Client(create_server(search_function)) as client:
+        return await client.call_tool("search_runbooks", arguments)
+
+
+async def test_search_runbooks_passes_the_query_system_and_limit():
+    recording = RecordingSearch()
+
+    result = await search(
+        recording, query="schema errors", system="invoice-processing", top_k=3
+    )
+
+    assert result.is_error is False
+    assert ids(result) == [module.API_SPECS[0].evidence_id]
+    assert recording.calls == [("schema errors", "invoice-processing", 3)]
+
+
+@pytest.mark.parametrize(
+    "arguments, message",
+    [
+        ({"query": " ", "system": "invoice-processing"}, "query must not be blank"),
+        ({"query": "schema", "system": " "}, "system must not be blank"),
+        (
+            {"query": "schema", "system": "invoice-processing", "top_k": 50},
+            "top_k must be between 1 and 10",
+        ),
+    ],
+)
+async def test_search_runbooks_refuses_bad_arguments(arguments, message):
+    recording = RecordingSearch()
+
+    result = await search(recording, **arguments)
+
+    assert result.is_error is True
+    assert message in result.content[0].text
+    assert recording.calls == []
+
+
+async def test_a_server_without_a_search_has_no_search_tool():
+    async with Client(server) as client:
+        tools = await client.list_tools()
+
+    assert "search_runbooks" not in {tool.name for tool in tools.tools}

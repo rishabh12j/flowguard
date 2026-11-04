@@ -33,13 +33,11 @@ def model_is_available() -> bool:
 async def test_gemma_diagnoses_inc_001_end_to_end(client, embedder):
     if not model_is_available():
         pytest.skip(f"Ollama is not running with {MODEL}")
-    retriever = partial(retrieve, embedder=embedder, client=client)
+    search = partial(retrieve, embedder=embedder, client=client)
     store = SqliteAuditStore()
 
-    async with open_evidence_tools() as tools:
-        dependencies = Dependencies(
-            retriever=retriever, tools=tools, llm=OllamaLLM(), audit=store
-        )
+    async with open_evidence_tools(search) as tools:
+        dependencies = Dependencies(tools=tools, llm=OllamaLLM(), audit=store)
         state = await investigate(
             build_graph(InMemorySaver(serde=SERIALIZER)),
             load_incident("INC-001"),

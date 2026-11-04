@@ -12,7 +12,7 @@ from flowguard.dataset import load_evidence
 from flowguard.domain.audit import InvestigationRecord
 from flowguard.graph.builder import InvestigationGraph, build_graph
 from flowguard.graph.checkpoints import open_checkpointer
-from flowguard.graph.context import AuditStore, EvidenceTools, Retriever
+from flowguard.graph.context import AuditStore, EvidenceTools
 from flowguard.llm.client import LLM, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.rag.embedding import SentenceTransformerEmbedder
@@ -32,7 +32,6 @@ class Services:
     """What every request shares. Tools are not shared: each investigation opens its own."""
 
     graph: InvestigationGraph
-    retriever: Retriever
     llm: LLM
     audit: AuditLog
     # Opens new tools, with their own guard and history, for one investigation.
@@ -50,10 +49,11 @@ async def open_services(settings: Settings | None = None) -> AsyncIterator[Servi
     async with open_checkpointer(settings.checkpoint_db) as checkpointer:
         yield Services(
             graph=build_graph(checkpointer),
-            retriever=partial(retrieve, embedder=embedder, client=client),
             llm=OllamaLLM(),
             audit=SqliteAuditStore(settings.audit_db),
-            open_tools=open_evidence_tools,
+            open_tools=partial(
+                open_evidence_tools, partial(retrieve, embedder=embedder, client=client)
+            ),
         )
 
 

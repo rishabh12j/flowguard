@@ -43,6 +43,9 @@ class EmptyTools:
     async def get_dependency_map(self, service) -> Found:
         return self._record("get_dependency_map")
 
+    async def search_runbooks(self, query, system) -> Found:
+        return self._record("search_runbooks")
+
 
 class Toolbox:
     """Opens new tools for each investigation, and keeps every set it opened."""
@@ -65,7 +68,6 @@ class BrokenStore(SqliteAuditStore):
 def serve(store, toolbox=None, **options) -> TestClient:
     services = Services(
         graph=build_graph(InMemorySaver(serde=SERIALIZER)),
-        retriever=lambda query, *, system: [],
         llm=FakeLLM(),
         audit=store,
         open_tools=(toolbox or Toolbox()).open,

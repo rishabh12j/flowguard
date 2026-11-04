@@ -23,7 +23,6 @@ class DecisionRequest(BaseModel):
 
 def dependencies(services: Services, tools: EvidenceTools) -> Dependencies:
     return Dependencies(
-        retriever=services.retriever,
         tools=tools,
         llm=services.llm,
         audit=services.audit,

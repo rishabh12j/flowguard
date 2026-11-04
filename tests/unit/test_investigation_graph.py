@@ -157,6 +157,8 @@ class FakeTools:
             "get_dependency_map": Found(list(maps)),
         }
         self.failing = failing
+        # Documents come through the tools too, as they do through MCP.
+        self.retriever = FakeRetriever()
         self.calls: list[tuple] = []
         self.history: list[ToolCallRecord] = []
 
@@ -174,6 +176,12 @@ class FakeTools:
 
     async def get_dependency_map(self, service) -> Found:
         return self._answer("get_dependency_map", service)
+
+    async def search_runbooks(self, query, system) -> Found:
+        self.calls.append(("search_runbooks", query, system))
+        if self.failing == "search_runbooks":
+            raise EvidenceUnavailable("search_runbooks: timed out")
+        return Found(self.retriever(query, system=system))
 
 
 def full_tools(**options) -> FakeTools:
@@ -194,9 +202,11 @@ class FakeAudit:
 
 
 def dependencies(retriever=None, tools=None, llm=None, audit=None) -> Dependencies:
+    tools = tools or FakeTools()
+    if retriever is not None and isinstance(tools, FakeTools):
+        tools.retriever = retriever
     return Dependencies(
-        retriever=retriever or FakeRetriever(),
-        tools=tools or FakeTools(),
+        tools=tools,
         llm=llm or FakeLLM(proposal("LOG-882")),
         audit=audit or FakeAudit(),
     )
@@ -990,3 +1000,32 @@ async def test_a_run_that_exceeds_the_step_limit_stops():
             dependencies(retriever=FakeRetriever(SPEC), tools=full_tools()),
             step_limit=3,
         )
+
+
+async def test_a_failed_document_search_is_recorded_and_the_investigation_continues():
+    state = await run(tools=full_tools(failing="search_runbooks"))
+
+    assert "runbook_retrieval: search_runbooks: timed out" in state["errors"]
+    assert "LOG-882" in ids(state)
+
+
+async def test_a_failed_follow_up_search_is_a_missing_source():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    await decide(
+        graph,
+        "INVEST-1",
+        decision("request_more_evidence", comment=REVIEW),
+        dependencies(
+            tools=FakeTools(failing="search_runbooks"),
+            llm=diagnosing_llm(),
+            audit=audit,
+        ),
+    )
+
+    latest = audit.records[-1]
+    assert "follow_up: search_runbooks: timed out" in latest.errors
+    # The round went ahead, a source short: 0.90 less 0.15.
+    assert latest.status == "awaiting_approval"
+    assert latest.hypotheses[0].confidence == 0.75

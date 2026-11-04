@@ -170,6 +170,7 @@ class LeakyClient:
             "search_logs": [leaky],
             "get_deployments": [UPSTREAM_DEPLOY.model_dump(mode="json")],
             "get_dependency_map": [DEPENDENCY_MAP.model_dump(mode="json")],
+            "search_runbooks": [SPEC.model_dump(mode="json")],
         }
 
     async def call_tool(self, name, arguments) -> CallToolResult:
@@ -211,11 +212,13 @@ async def test_the_model_cannot_make_tools_run_again():
 
     await run(retriever=FakeRetriever(SPEC), tools=tools, llm=llm)
 
-    # Each tool runs once, whatever the evidence or the model says.
-    assert [call[0] for call in tools.calls] == [
-        "search_logs",
-        "get_deployments",
+    # Each tool runs once, whatever the evidence or the model says. Logs and
+    # documents are searched in parallel, so the order of the calls can vary.
+    assert sorted(call[0] for call in tools.calls) == [
         "get_dependency_map",
+        "get_deployments",
+        "search_logs",
+        "search_runbooks",
     ]
 
 

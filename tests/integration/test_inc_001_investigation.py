@@ -70,11 +70,9 @@ def store():
 
 @pytest.fixture
 async def state(client, embedder, store):
-    retriever = partial(retrieve, embedder=embedder, client=client)
-    async with open_evidence_tools() as tools:
-        dependencies = Dependencies(
-            retriever=retriever, tools=tools, llm=ScriptedLLM(), audit=store
-        )
+    search = partial(retrieve, embedder=embedder, client=client)
+    async with open_evidence_tools(search) as tools:
+        dependencies = Dependencies(tools=tools, llm=ScriptedLLM(), audit=store)
         return await investigate(
             build_graph(InMemorySaver(serde=SERIALIZER)),
             load_incident("INC-001"),
@@ -136,21 +134,25 @@ async def test_inc_001_is_saved_with_every_tool_call(state, store):
     record = store.get(state["investigation_id"])
 
     assert record.status == "awaiting_approval"
-    assert [(call.tool, call.outcome) for call in record.tool_calls] == [
-        ("search_logs", "ok"),
-        ("get_deployments", "ok"),
+    # Logs and documents are searched in parallel, so the order can vary.
+    assert sorted((call.tool, call.outcome) for call in record.tool_calls) == [
         ("get_dependency_map", "ok"),
+        ("get_deployments", "ok"),
+        ("search_logs", "ok"),
+        ("search_runbooks", "ok"),
     ]
+    assert any(item.startswith("SPEC-INVOICE-V3") for item in record.evidence_ids)
     assert "LOG-882" in record.evidence_ids
 
 
 def services_for(client, embedder, store=None) -> Services:
     return Services(
         graph=build_graph(InMemorySaver(serde=SERIALIZER)),
-        retriever=partial(retrieve, embedder=embedder, client=client),
         llm=ScriptedLLM(),
         audit=store or SqliteAuditStore(),
-        open_tools=open_evidence_tools,
+        open_tools=partial(
+            open_evidence_tools, partial(retrieve, embedder=embedder, client=client)
+        ),
     )
 
 

@@ -358,7 +358,7 @@ This node must be deterministic wherever possible.
 - Store tool calls, tool results, evidence IDs, model outputs, validation results, and approvals.
 - Produce a user-readable incident report.
 
-> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Since then, each stage saves a new version instead: the plan and its rejected steps (2026-11-04), then the approval decision. Versions are append-only, and `(investigation_id, version)` is unique, so two decisions can't both be saved. Still missing: full tool results, raw model output, retrieval calls (not yet through MCP), and the readable report.
+> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Since then, each stage saves a new version instead: the plan and its rejected steps (2026-11-04), then the approval decision. Versions are append-only, and `(investigation_id, version)` is unique, so two decisions can't both be saved. Retrieval now goes through MCP, so it appears in the tool calls too. Still missing: full tool results, raw model output, and the readable report.
 
 ---
 
@@ -1077,8 +1077,10 @@ Each seeded incident should include:
 ### Milestone 2 — MCP data-access layer
 
 - [ ] Implement observability MCP server.
-- [ ] Implement knowledge MCP server.
+- [x] Implement knowledge MCP server.
 - [ ] Implement operations MCP server.
+
+> **Status 2026-11-04:** all three servers run in-process, and every piece of evidence the graph uses now comes through them. The knowledge server has all three of its tools. Still missing: `get_metrics` and `get_alert` on the observability server, and `search_incidents` and `get_incident` on the operations server. The seeded data has no metrics or alerts yet, so these come with the new incidents. Past incidents are already searchable through `search_runbooks`.
 - [x] Add scoped permissions and call limits.
 - [x] Add MCP integration tests.
 
@@ -1148,13 +1150,13 @@ Each seeded incident should include:
 The MVP is complete when:
 
 - [ ] Five seeded incidents exist with known ground truth.
-- [ ] Evidence is accessed through MCP tools.
+- [x] Evidence is accessed through MCP tools.
 - [ ] LangGraph controls a stateful investigation workflow.
 - [ ] RAG retrieves runbooks, API specifications, and historical incidents.
 - [x] Important conclusions cite evidence IDs.
 - [x] Unsupported conclusions are rejected or marked uncertain.
 - [x] State-changing proposals require explicit approval.
-- [ ] Every tool call and decision is audited.
+- [x] Every tool call and decision is audited.
 - [ ] The complete stack runs through Docker Compose.
 - [ ] Evaluation metrics are generated automatically.
 - [ ] Unsafe-action and approval-bypass rates are zero.

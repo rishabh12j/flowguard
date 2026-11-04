@@ -21,7 +21,7 @@ from flowguard.llm.client import LLM, LLMError
 # The brief's line between moderate and insufficient confidence.
 MIN_CONFIDENCE = 0.65
 # The nodes that gather evidence. Only their errors are missing sources.
-EVIDENCE_NODES = ("log_analysis", "dependency_trace", "runbook_retrieval")
+EVIDENCE_NODES = ("log_analysis", "dependency_trace", "runbook_retrieval", "follow_up")
 
 
 SYSTEM = (
