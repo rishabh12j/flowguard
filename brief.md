@@ -350,7 +350,7 @@ This node must be deterministic wherever possible.
 - Allow approve, reject, or request-more-evidence.
 - Never treat silence as approval.
 
-> **Built 2026-11-04:** a plan with a state-changing step is saved as `awaiting_approval`, then the graph pauses with LangGraph's `interrupt()`. The paused state lives in a SQLite checkpoint file, so it survives a restart. Only `POST /investigations/{id}/approve`, `/reject`, or `/request-more-evidence` resumes it, with a named approver; reject and request-more-evidence need a comment. Resuming without a decision pauses again, and nothing times out into approval. Approval records the decision without executing anything, as the MVP allows. Request-more-evidence ends the investigation as `more_evidence_requested`; the loop back into evidence gathering is built with graph retries and step limits. The approver's name isn't authenticated in the MVP.
+> **Built 2026-11-04:** a plan with a state-changing step is saved as `awaiting_approval`, then the graph pauses with LangGraph's `interrupt()`. The paused state lives in a SQLite checkpoint file, so it survives a restart. Only `POST /investigations/{id}/approve`, `/reject`, or `/request-more-evidence` resumes it, with a named approver; reject and request-more-evidence need a comment. Resuming without a decision pauses again, and nothing times out into approval. Approval records the decision without executing anything, as the MVP allows. Request-more-evidence sends the investigation round once more (see section 11). The approver's name isn't authenticated in the MVP.
 
 #### 10. `audit_node`
 
@@ -392,6 +392,8 @@ triage
 ```
 
 The MVP may stop after approval and record the proposed action without executing it.
+
+> **Built 2026-11-04:** the routing above is built, with these limits. "Invalid → remediation" happens only when validation rejected every step: the model gets one more attempt, with each rejection's reason in its prompt, and a plan with some valid steps is kept as it is. "More evidence" happens at most once: the reviewer's comment becomes a new knowledge-base search, and the model sees it when it reasons and plans again; a second request ends the investigation. The follow-up searches documents only, so it can't fetch logs the first round didn't. Every run of the graph has a step limit of 40, against about ten for a normal investigation. Ollama calls are retried up to twice, with a growing wait, but only for server errors and lost connections.
 
 ---
 
@@ -1101,7 +1103,7 @@ Each seeded incident should include:
 - [x] Implement dependency tracing.
 - [x] Implement runbook retrieval.
 - [x] Implement root-cause synthesis.
-- [ ] Implement graph retries and step limits.
+- [x] Implement graph retries and step limits.
 
 **Exit condition:** The graph diagnoses one incident end to end.
 

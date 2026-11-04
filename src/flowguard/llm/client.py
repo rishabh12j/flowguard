@@ -1,3 +1,4 @@
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -8,6 +9,10 @@ OLLAMA_URL = "http://localhost:11434"
 
 class LLMError(Exception):
     """The model could not produce a response."""
+
+
+class TransientLLMError(LLMError):
+    """A failure that may not happen again, such as a crashed model runner."""
 
 
 class LLM(Protocol):
@@ -22,15 +27,31 @@ class OllamaLLM:
         client: httpx.Client | None = None,
         temperature: float = 0.0,
         timeout_seconds: float = 300.0,
+        retries: int = 2,
+        retry_delay_seconds: float = 2.0,
     ) -> None:
         self.model = model
         self.temperature = temperature
+        self.retries = retries
+        self.retry_delay_seconds = retry_delay_seconds
         # The first call loads the model into memory, which took nearly three minutes in testing.
         self._client = client or httpx.Client(
             base_url=OLLAMA_URL, timeout=timeout_seconds
         )
 
     def generate(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
+        # Only transient failures are retried, a fixed number of times, waiting
+        # longer each time. Ollama's runner sometimes crashes and restarts.
+        for attempt in range(self.retries + 1):
+            try:
+                return self._generate_once(system, prompt, schema)
+            except TransientLLMError:
+                if attempt == self.retries:
+                    raise
+                time.sleep(self.retry_delay_seconds * 2**attempt)
+        raise AssertionError("unreachable: the last attempt returns or raises")
+
+    def _generate_once(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
         try:
             response = self._client.post(
                 "/api/chat",
@@ -48,11 +69,17 @@ class OllamaLLM:
                 },
             )
         except httpx.TimeoutException as error:
-            # Giving up here does not stop Ollama, which may keep generating.
+            # Not retried: Ollama may still be generating, and a retry would queue
+            # a second request behind it.
             raise LLMError(f"{self.model} did not answer in time") from error
         except httpx.TransportError as error:
-            raise LLMError(f"could not reach Ollama: {error}") from error
+            raise TransientLLMError(f"could not reach Ollama: {error}") from error
 
+        if response.is_server_error:
+            raise TransientLLMError(
+                f"{self.model} failed with {response.status_code}: {response.text[:200]}"
+            )
+        # A client error, such as a missing model, won't fix itself.
         if response.is_error:
             raise LLMError(
                 f"{self.model} failed with {response.status_code}: {response.text[:200]}"

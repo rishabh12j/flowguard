@@ -240,10 +240,15 @@ def test_a_request_for_more_evidence_is_recorded(paused_api):
         json={"approver": "sam", "comment": "Check the ERP connector's logs too."},
     )
 
-    assert response.json()["status"] == "more_evidence_requested"
-    assert response.json()["decision"]["comment"] == (
-        "Check the ERP connector's logs too."
-    )
+    # The investigation reasoned again with the request and paused for approval.
+    assert response.json()["status"] == "awaiting_approval"
+    assert response.json()["evidence_round"] == 1
+    assert response.json()["reviewer_request"] == "Check the ERP connector's logs too."
+    assert [event["status"] for event in api.get(f"{path}/events").json()] == [
+        "awaiting_approval",
+        "more_evidence_requested",
+        "awaiting_approval",
+    ]
 
 
 class RacedStore(SqliteAuditStore):

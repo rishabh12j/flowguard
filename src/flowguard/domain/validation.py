@@ -63,6 +63,7 @@ def check_actions(
     proposed: Sequence[ProposedAction],
     evidence: Sequence[EvidenceItem],
     root_cause: RootCauseHypothesis,
+    attempt: int = 1,
 ) -> tuple[tuple[PlannedAction, ...], tuple[RejectedAction, ...]]:
     evidence_ids = {item.evidence_id for item in evidence}
     grounds = grounds_for_action(evidence, root_cause)
@@ -74,7 +75,9 @@ def check_actions(
     for action in proposed:
         problem = problem_with(action, evidence_ids, grounds, targets, cause_fixed)
         if problem is not None:
-            rejected.append(RejectedAction(proposed=action, problem=problem))
+            rejected.append(
+                RejectedAction(proposed=action, problem=problem, attempt=attempt)
+            )
             continue
         spec = CATALOGUE[action.action]
         # Only a step that passed counts as a fix, so a rejected fix can't unlock a replay.

@@ -1,6 +1,6 @@
-import operator
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, TypeVar
 
 from flowguard.domain.approval import ApprovalDecision
 from flowguard.domain.audit import InvestigationStatus, ToolCallRecord
@@ -13,6 +13,14 @@ from flowguard.domain.remediation import (
     RejectedAction,
 )
 
+Item = TypeVar("Item")
+
+
+def joined(existing: Iterable[Item], new: Iterable[Item]) -> tuple[Item, ...]:
+    # A checkpoint stores tuples as lists, so after a resume the existing value is
+    # a list. operator.add can't join a list and a tuple; this joins anything.
+    return (*existing, *new)
+
 
 class InvestigationState(TypedDict, total=False):
     # Every key is optional because a node returns only the keys it changes.
@@ -22,22 +30,30 @@ class InvestigationState(TypedDict, total=False):
     incident: Incident
     first_failure: EvidenceItem
     hypotheses: tuple[RootCauseHypothesis, ...]
-    selected_root_cause: RootCauseHypothesis
+    # None again when a follow-up round starts, until a root cause is selected.
+    selected_root_cause: RootCauseHypothesis | None
     # The selected root cause's category, or unknown when FlowGuard abstains.
     category: IncidentCategory
 
     # Why no root cause was selected. Abstaining is a result, not an error.
-    abstention: str
+    abstention: str | None
     status: InvestigationStatus
     proposed_actions: tuple[ProposedAction, ...]
     actions: tuple[PlannedAction, ...]
+    # Every rejection in this round, from every attempt.
     rejected_actions: tuple[RejectedAction, ...]
+    # What was wrong with the latest attempt, shown to the model if it tries again.
+    plan_problems: tuple[str, ...]
+    remediation_attempts: int
     requires_approval: bool
-    decision: ApprovalDecision
+    decision: ApprovalDecision | None
+    # How many follow-up rounds a reviewer has asked for, and what they asked.
+    evidence_round: int
+    reviewer_request: str | None
     # Kept by the audit node, so a resumed investigation continues its record.
     audit_version: int
     tool_calls: tuple[ToolCallRecord, ...]
 
     # These reducers join updates, so nodes running in parallel can all add to them.
-    evidence: Annotated[tuple[EvidenceItem, ...], operator.add]
-    errors: Annotated[tuple[str, ...], operator.add]
+    evidence: Annotated[tuple[EvidenceItem, ...], joined]
+    errors: Annotated[tuple[str, ...], joined]

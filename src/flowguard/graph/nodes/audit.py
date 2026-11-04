@@ -23,7 +23,7 @@ def status_of(state: InvestigationState) -> InvestigationStatus:
     decision = state.get("decision")
     if "incident" not in state:
         return "rejected"
-    if "selected_root_cause" not in state:
+    if state.get("selected_root_cause") is None:
         return "abstained"
     if decision is not None:
         return DECIDED[decision.decision]
@@ -56,6 +56,8 @@ def build_record(
         rejected_actions=state.get("rejected_actions", ()),
         requires_approval=state.get("requires_approval", False),
         decision=state.get("decision"),
+        evidence_round=state.get("evidence_round", 0),
+        reviewer_request=state.get("reviewer_request"),
     )
 
 

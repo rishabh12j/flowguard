@@ -13,14 +13,24 @@ from flowguard.graph.context import Dependencies
 from flowguard.graph.nodes.approval import approval
 from flowguard.graph.nodes.audit import audit
 from flowguard.graph.nodes.dependency_trace import dependency_trace
+from flowguard.graph.nodes.follow_up import follow_up
 from flowguard.graph.nodes.intake import intake
 from flowguard.graph.nodes.log_analysis import log_analysis
 from flowguard.graph.nodes.remediation import remediation
 from flowguard.graph.nodes.retrieval import runbook_retrieval
 from flowguard.graph.nodes.root_cause import root_cause
 from flowguard.graph.nodes.validation import validation
-from flowguard.graph.routing import after_audit, after_intake, after_root_cause
+from flowguard.graph.routing import (
+    after_audit,
+    after_intake,
+    after_root_cause,
+    after_validation,
+)
 from flowguard.graph.state import InvestigationState
+
+# The most steps one run of the graph may take. A normal investigation takes about
+# ten, so this only stops a routing mistake from looping forever.
+STEP_LIMIT = 40
 
 InvestigationGraph = CompiledStateGraph[
     InvestigationState, Dependencies, InvestigationState, InvestigationState
@@ -39,6 +49,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> InvestigationGraph:
     graph.add_node("validation", validation)
     graph.add_node("audit", audit)
     graph.add_node("approval", approval)
+    graph.add_node("follow_up", follow_up)
 
     graph.add_edge(START, "intake")
     graph.add_conditional_edges(
@@ -52,10 +63,14 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> InvestigationGraph:
         "root_cause", after_root_cause, ["remediation", "audit"]
     )
     graph.add_edge("remediation", "validation")
-    graph.add_edge("validation", "audit")
+    graph.add_conditional_edges(
+        "validation", after_validation, ["remediation", "audit"]
+    )
     # A plan that needs approval is saved, waits for a decision, and is saved again.
-    graph.add_conditional_edges("audit", after_audit, ["approval", END])
+    graph.add_conditional_edges("audit", after_audit, ["approval", "follow_up", END])
     graph.add_edge("approval", "audit")
+    # A request for more evidence searches again, then reasons and plans again.
+    graph.add_edge("follow_up", "root_cause")
 
     return graph.compile(checkpointer=checkpointer)
 
@@ -70,6 +85,7 @@ async def investigate(
     dependencies: Dependencies,
     *,
     investigation_id: str | None = None,
+    step_limit: int = STEP_LIMIT,
 ) -> dict[str, Any]:
     investigation_id = investigation_id or new_investigation_id()
     return await graph.ainvoke(
@@ -81,7 +97,10 @@ async def investigate(
             "request": redact_value("", request),
         },
         # The checkpointer keeps each investigation's state under its own ID.
-        {"configurable": {"thread_id": investigation_id}},
+        {
+            "configurable": {"thread_id": investigation_id},
+            "recursion_limit": step_limit,
+        },
         context=dependencies,
     )
 
@@ -91,10 +110,15 @@ async def decide(
     investigation_id: str,
     decision: ApprovalDecision,
     dependencies: Dependencies,
+    *,
+    step_limit: int = STEP_LIMIT,
 ) -> dict[str, Any]:
     # Resumes the paused approval node, which receives the decision.
     return await graph.ainvoke(
         Command(resume=decision),
-        {"configurable": {"thread_id": investigation_id}},
+        {
+            "configurable": {"thread_id": investigation_id},
+            "recursion_limit": step_limit,
+        },
         context=dependencies,
     )

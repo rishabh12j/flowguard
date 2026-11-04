@@ -3,15 +3,19 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fakes import FakeLLM
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import ValidationError
 
 from flowguard.domain.approval import ApprovalDecision
 from flowguard.domain.audit import ToolCallRecord
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.incidents import Incident
 from flowguard.graph.builder import build_graph, decide, investigate
 from flowguard.graph.checkpoints import SERIALIZER, open_checkpointer
 from flowguard.graph.context import Dependencies, EvidenceUnavailable, Found
+from flowguard.graph.nodes.root_cause import root_cause
 from flowguard.llm.client import LLMError
 
 pytestmark = pytest.mark.anyio
@@ -788,10 +792,7 @@ async def test_an_approval_is_saved_as_a_new_version():
     assert "__interrupt__" not in state
 
 
-@pytest.mark.parametrize(
-    "choice, status",
-    [("reject", "declined"), ("request_more_evidence", "more_evidence_requested")],
-)
+@pytest.mark.parametrize("choice, status", [("reject", "declined")])
 async def test_a_refusal_ends_the_investigation(choice, status):
     audit = FakeAudit()
     graph, _ = await paused(audit)
@@ -847,3 +848,145 @@ async def test_a_paused_investigation_survives_a_restart(tmp_path):
     # Every model in the state came back as itself, not as a plain dict.
     assert second.actions == first.actions
     assert second.selected_hypothesis_id == "HYP-1"
+
+
+REVIEW = "Check how the supplier contract changed in past incidents."
+
+
+async def request_more_evidence(audit, graph, retriever=None, llm=None):
+    return await decide(
+        graph,
+        "INVEST-1",
+        decision("request_more_evidence", comment=REVIEW),
+        dependencies(
+            retriever=retriever or FakeRetriever(SPEC, PAST),
+            llm=llm or diagnosing_llm(),
+            audit=audit,
+        ),
+    )
+
+
+async def test_a_request_for_more_evidence_searches_and_reasons_again():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+    retriever = FakeRetriever(SPEC, PAST)
+    llm = diagnosing_llm()
+
+    state = await request_more_evidence(audit, graph, retriever, llm)
+
+    assert [record.status for record in audit.records] == [
+        "awaiting_approval",
+        "more_evidence_requested",
+        "awaiting_approval",
+    ]
+    # The reviewer's comment was the search, and only new documents were added.
+    assert retriever.calls == [(REVIEW, "invoice-processing")]
+    found = [item.evidence_id for item in state["evidence"]]
+    assert found.count(SPEC.evidence_id) == 1
+    assert PAST.evidence_id in found
+    # The model saw the request when it reasoned and planned again.
+    assert all(REVIEW in prompt for _, prompt, _ in llm.calls)
+    latest = audit.records[-1]
+    assert (latest.evidence_round, latest.reviewer_request) == (1, REVIEW)
+    assert latest.decision is None
+
+
+async def test_a_second_request_for_more_evidence_ends_the_investigation():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+    await request_more_evidence(audit, graph)
+
+    await request_more_evidence(audit, graph)
+
+    assert audit.records[-1].status == "more_evidence_requested"
+    assert (await graph.aget_state(THREAD)).next == ()
+
+
+async def test_a_follow_up_round_does_not_keep_the_old_plan():
+    audit = FakeAudit()
+    graph, _ = await paused(audit)
+
+    # This time the best hypothesis is too weak, so FlowGuard abstains.
+    await request_more_evidence(audit, graph, llm=FakeLLM(proposal("LOG-882")))
+
+    latest = audit.records[-1]
+    assert latest.status == "abstained"
+    assert latest.actions == ()
+    assert latest.selected_hypothesis_id is None
+
+
+async def test_a_plan_with_nothing_left_is_tried_again_with_the_reasons():
+    llm = diagnosing_llm(
+        actions=[step("disable_payload_validation", "invoice-transformer")],
+        later_actions=[step("update_field_mapping", "invoice-transformer")],
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert [action.action for action in state["actions"]] == ["update_field_mapping"]
+    [rejected] = state["rejected_actions"]
+    assert (rejected.proposed.action, rejected.attempt) == (
+        "disable_payload_validation",
+        1,
+    )
+    retry_prompt = llm.calls[2][1]
+    assert (
+        "Every step of your previous plan was refused:\n"
+        "- disable_payload_validation on invoice-transformer: not an allowed action"
+    ) in retry_prompt
+
+
+async def test_a_plan_is_tried_at_most_twice():
+    llm = diagnosing_llm(actions=[step("run_shell_command", "invoice-transformer")])
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    # One root-cause question and two plans.
+    assert len(llm.calls) == 3
+    assert [item.attempt for item in state["rejected_actions"]] == [1, 2]
+    assert state["actions"] == ()
+    assert state["status"] == "diagnosed"
+
+
+async def test_a_partly_valid_plan_is_kept_without_a_retry():
+    llm = diagnosing_llm(
+        actions=[
+            step("run_shell_command", "invoice-transformer"),
+            step("update_field_mapping", "invoice-transformer"),
+        ]
+    )
+
+    await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "error, confidence",
+    [
+        ("remediation: the model could not propose actions: timed out", 0.90),
+        ("log_analysis: search_logs: timed out", 0.75),
+    ],
+)
+def test_only_evidence_problems_lower_confidence(error, confidence):
+    state = {
+        "incident": Incident.model_validate(REQUEST),
+        "evidence": (FAILURE, UPSTREAM_DEPLOY, DEPENDENCY_MAP, SPEC),
+        "first_failure": FAILURE,
+        "errors": (error,),
+    }
+    llm = FakeLLM(proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id))
+
+    update = root_cause(state, Runtime(context=dependencies(llm=llm)))
+
+    assert update["selected_root_cause"].confidence == confidence
+
+
+async def test_a_run_that_exceeds_the_step_limit_stops():
+    with pytest.raises(GraphRecursionError):
+        await investigate(
+            new_graph(),
+            REQUEST,
+            dependencies(retriever=FakeRetriever(SPEC), tools=full_tools()),
+            step_limit=3,
+        )

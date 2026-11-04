@@ -137,3 +137,5 @@ class RejectedAction(BaseModel):
 
     proposed: ProposedAction
     problem: str
+    # Which attempt at a plan proposed it. A plan with nothing left is retried.
+    attempt: int = Field(default=1, ge=1)

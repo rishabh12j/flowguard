@@ -46,11 +46,22 @@ def remediation_prompt(
     incident: Incident,
     root_cause: RootCauseHypothesis,
     evidence: Sequence[EvidenceItem],
+    problems: Sequence[str] = (),
+    reviewer_request: str | None = None,
 ) -> str:
+    # Validation's reasons, so a second attempt can avoid the same mistakes.
+    refused = (
+        "Every step of your previous plan was refused:\n"
+        + "".join(f"- {problem}\n" for problem in problems)
+        + "Propose a corrected plan.\n\n"
+        if problems
+        else ""
+    )
     return (
         f"Confirmed root cause ({root_cause.category}): {root_cause.description}\n"
         f"Supported by: {', '.join(root_cause.supporting_evidence_ids)}\n\n"
-        + build_prompt(incident, evidence)
+        + refused
+        + build_prompt(incident, evidence, reviewer_request)
     )
 
 
@@ -59,12 +70,14 @@ def propose_actions(
     root_cause: RootCauseHypothesis,
     evidence: Sequence[EvidenceItem],
     llm: LLM,
+    problems: Sequence[str] = (),
+    reviewer_request: str | None = None,
 ) -> tuple[ProposedAction, ...]:
     evidence_ids = sorted({item.evidence_id for item in evidence})
     targets = sorted(set().union(*targets_in(evidence).values()))
     text = llm.generate(
         SYSTEM,
-        remediation_prompt(incident, root_cause, evidence),
+        remediation_prompt(incident, root_cause, evidence, problems, reviewer_request),
         remediation_schema(evidence_ids, targets),
     )
     try:
@@ -80,16 +93,24 @@ def propose_actions(
 def remediation(
     state: InvestigationState, runtime: Runtime[Dependencies]
 ) -> InvestigationState:
+    root_cause = state.get("selected_root_cause")
+    if root_cause is None:
+        raise ValueError("routing sends only a selected root cause to remediation")
+    attempt = state.get("remediation_attempts", 0) + 1
     try:
         proposed = propose_actions(
             state["incident"],
-            state["selected_root_cause"],
+            root_cause,
             state.get("evidence", ()),
             runtime.context.llm,
+            state.get("plan_problems", ()),
+            state.get("reviewer_request"),
         )
     except (LLMError, InvalidProposal) as error:
         # With no proposal, nothing is planned, so nothing can change state.
         return {
-            "errors": (f"remediation: the model could not propose actions: {error}",)
+            "errors": (f"remediation: the model could not propose actions: {error}",),
+            "proposed_actions": (),
+            "remediation_attempts": attempt,
         }
-    return {"proposed_actions": proposed}
+    return {"proposed_actions": proposed, "remediation_attempts": attempt}

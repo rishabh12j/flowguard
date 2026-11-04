@@ -63,3 +63,5 @@ class InvestigationRecord(BaseModel):
     rejected_actions: tuple[RejectedAction, ...] = ()
     requires_approval: bool = False
     decision: ApprovalDecision | None = None
+    evidence_round: int = Field(default=0, ge=0)
+    reviewer_request: str | None = None

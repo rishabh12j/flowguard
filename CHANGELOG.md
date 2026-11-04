@@ -56,6 +56,13 @@
 - Fixed a prompt weakness: evidence containing `</evidence>` could close the evidence fence early, so injected text after it would read as instructions. Fence tags inside data are now replaced.
 - Added `tests/unit/test_safety.py`, covering every threat in the brief's safety list. Most tests use a compromised model that obeys injected text, and show that the catalogue, validation, scoring, and approval still hold.
 - A test checks that the seeded data contains nothing that looks like a credential, so redaction never changes what Gemma sees for INC-001.
+- The Ollama client now retries server errors and lost connections up to twice, waiting 2 then 4 seconds. Timeouts and client errors, such as a missing model, aren't retried. This covers the intermittent crash of Ollama's runner seen in earlier runs.
+- If validation rejects every step of a plan, the model gets one more attempt, with each rejection's reason in its prompt. Rejected steps record which attempt proposed them.
+- "Request more evidence" now sends the investigation round once more: the reviewer's comment becomes a new knowledge-base search, the model sees the comment, and the new plan pauses for approval again. A second request ends the investigation.
+- Every run of the graph has a step limit of 40, as a backstop against a routing mistake.
+- Fixed: every error counted as a missing evidence source, so a failed plan in one round would have lowered the next round's confidence. Only errors from evidence-gathering nodes count now.
+- Fixed: a checkpoint stores tuples as lists, so adding evidence after a resume failed with `TypeError`. The state's reducers now accept both.
+- The audit record gains `evidence_round` and `reviewer_request`.
 
 ## 2026-11-03
 

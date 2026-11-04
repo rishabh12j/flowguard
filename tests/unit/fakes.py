@@ -26,12 +26,15 @@ class FakeLLM:
         self,
         *hypotheses: dict,
         actions: list[dict] | None = None,
+        later_actions: list[dict] | None = None,
         answer: str | None = None,
         error: Exception | None = None,
     ) -> None:
         self.answer = answer or json.dumps({"hypotheses": list(hypotheses)})
         self.actions = actions
-
+        # The plan for every remediation question after the first, if different.
+        self.later_actions = later_actions
+        self.plans_given = 0
         self.error = error
         self.calls: list[tuple[str, str, dict]] = []
 
@@ -41,5 +44,9 @@ class FakeLLM:
             raise self.error
         # The remediation schema asks for actions, so those questions get actions.
         if self.actions is not None and "actions" in schema.get("properties", {}):
-            return json.dumps({"actions": self.actions})
+            self.plans_given += 1
+            later = self.plans_given > 1 and self.later_actions is not None
+            return json.dumps(
+                {"actions": self.later_actions if later else self.actions}
+            )
         return self.answer

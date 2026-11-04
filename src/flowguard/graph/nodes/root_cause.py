@@ -20,6 +20,8 @@ from flowguard.llm.client import LLM, LLMError
 
 # The brief's line between moderate and insufficient confidence.
 MIN_CONFIDENCE = 0.65
+# The nodes that gather evidence. Only their errors are missing sources.
+EVIDENCE_NODES = ("log_analysis", "dependency_trace", "runbook_retrieval")
 
 
 SYSTEM = (
@@ -67,9 +69,19 @@ def format_evidence(item: EvidenceItem) -> str:
     )
 
 
-def build_prompt(incident: Incident, evidence: Sequence[EvidenceItem]) -> str:
+def build_prompt(
+    incident: Incident,
+    evidence: Sequence[EvidenceItem],
+    reviewer_request: str | None = None,
+) -> str:
     items = "\n\n".join(format_evidence(item) for item in evidence)
-    return (
+    # A person sent the last plan back, so what they asked for comes first.
+    review = (
+        f"A reviewer sent the last plan back, asking: {unfenced(reviewer_request)}\n\n"
+        if reviewer_request
+        else ""
+    )
+    return review + (
         f"Incident {incident.incident_id} in {incident.affected_system}, reported "
         f"between {incident.start_time.isoformat()} and {incident.end_time.isoformat()}:\n"
         f"{unfenced(incident.description)}\n\n<evidence>\n{items}\n</evidence>"
@@ -77,14 +89,19 @@ def build_prompt(incident: Incident, evidence: Sequence[EvidenceItem]) -> str:
 
 
 def propose_hypotheses(
-    incident: Incident, evidence: Sequence[EvidenceItem], llm: LLM
+    incident: Incident,
+    evidence: Sequence[EvidenceItem],
+    llm: LLM,
+    reviewer_request: str | None = None,
 ) -> tuple[ProposedHypothesis, ...]:
     if not evidence:
         raise ValueError("there is no evidence to reason about")
 
     evidence_ids = sorted({item.evidence_id for item in evidence})
     text = llm.generate(
-        SYSTEM, build_prompt(incident, evidence), proposal_schema(evidence_ids)
+        SYSTEM,
+        build_prompt(incident, evidence, reviewer_request),
+        proposal_schema(evidence_ids),
     )
     try:
         proposal = HypothesisProposal.model_validate_json(text)
@@ -115,7 +132,12 @@ def root_cause(
         return {"abstention": "no evidence was gathered", "category": "unknown"}
 
     try:
-        proposals = propose_hypotheses(state["incident"], evidence, runtime.context.llm)
+        proposals = propose_hypotheses(
+            state["incident"],
+            evidence,
+            runtime.context.llm,
+            state.get("reviewer_request"),
+        )
     except (LLMError, InvalidProposal) as error:
         return {
             "abstention": f"the model could not propose a root cause: {error}",
@@ -123,8 +145,11 @@ def root_cause(
         }
 
     by_id = {item.evidence_id: item for item in evidence}
-    # Every recorded problem is a source that failed or was cut short.
-    missing_sources = len(state.get("errors", ()))
+    # Each problem recorded while gathering evidence is a source that failed or
+    # was cut short. Problems from later steps, such as planning, don't count.
+    missing_sources = sum(
+        1 for error in state.get("errors", ()) if error.startswith(EVIDENCE_NODES)
+    )
     hypotheses = []
     for number, proposal in enumerate(proposals, start=1):
         confidence, reason = score(

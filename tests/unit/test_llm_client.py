@@ -10,7 +10,8 @@ SCHEMA = {"type": "object"}
 
 def llm_answering(handler) -> OllamaLLM:
     client = httpx.Client(base_url=OLLAMA_URL, transport=httpx.MockTransport(handler))
-    return OllamaLLM(client=client)
+    # No waiting between retries, so the tests stay fast.
+    return OllamaLLM(client=client, retry_delay_seconds=0)
 
 
 def reply(content: str) -> httpx.Response:
@@ -77,3 +78,72 @@ def test_a_reply_without_a_message_raises_llm_error():
 
     with pytest.raises(LLMError, match="no message"):
         llm.generate("system", "prompt", SCHEMA)
+
+
+def answers_in_turn(*responses):
+    """A handler that gives each response once, in order, and counts the calls."""
+    calls = []
+
+    def handler(request):
+        response = responses[len(calls)]
+        calls.append(request)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    return handler, calls
+
+
+def test_a_crashed_runner_is_retried():
+    handler, calls = answers_in_turn(
+        httpx.Response(500, json={"error": "llama-server process has terminated"}),
+        reply('{"ok": true}'),
+    )
+
+    assert llm_answering(handler).generate("system", "prompt", SCHEMA) == '{"ok": true}'
+    assert len(calls) == 2
+
+
+def test_a_lost_connection_is_retried():
+    handler, calls = answers_in_turn(httpx.ConnectError("refused"), reply("{}"))
+
+    llm_answering(handler).generate("system", "prompt", SCHEMA)
+
+    assert len(calls) == 2
+
+
+def test_retries_stop_after_the_limit():
+    handler, calls = answers_in_turn(*[httpx.Response(503) for _ in range(5)])
+
+    with pytest.raises(LLMError, match="failed with 503"):
+        llm_answering(handler).generate("system", "prompt", SCHEMA)
+
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(404, json={"error": "model 'gemma4:12b' not found"}),
+        httpx.ReadTimeout("too slow"),
+    ],
+)
+def test_lasting_failures_and_timeouts_are_not_retried(response):
+    handler, calls = answers_in_turn(response, reply("{}"))
+
+    with pytest.raises(LLMError):
+        llm_answering(handler).generate("system", "prompt", SCHEMA)
+
+    assert len(calls) == 1
+
+
+def test_each_retry_waits_longer(monkeypatch):
+    waits = []
+    monkeypatch.setattr("flowguard.llm.client.time.sleep", waits.append)
+    handler, _ = answers_in_turn(*[httpx.Response(500) for _ in range(3)])
+    client = httpx.Client(base_url=OLLAMA_URL, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(LLMError):
+        OllamaLLM(client=client, retry_delay_seconds=2).generate("s", "p", SCHEMA)
+
+    assert waits == [2, 4]
