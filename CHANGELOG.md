@@ -7,6 +7,10 @@
 - Added `propose_hypotheses`, which asks the model for up to three root-cause hypotheses. A schema limits citations to the evidence provided, and code checks them again.
 - The model can't set a hypothesis's confidence. Code will score it with the brief's rubric.
 - Tests that call the real model are marked `llm` and only run with `pytest -m llm`.
+- Added the `log_analysis` node, which searches the incident window through MCP and marks the earliest error as the first failure.
+- Added the `dependency_trace` node, which finds deployments in the 24 hours before the first failure and drops those downstream of it on the dependency map.
+- Log analysis and document retrieval now run in parallel. The graph runs asynchronously.
+- Evidence from MCP is validated on arrival. A failing, denied, or truncated tool call is recorded in `errors` without stopping the investigation.
 
 ## 2026-11-03
 

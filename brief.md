@@ -1085,8 +1085,8 @@ Each seeded incident should include:
 
 - [x] Define typed graph state.
 - [ ] Implement intake and triage.
-- [ ] Implement log analysis.
-- [ ] Implement dependency tracing.
+- [x] Implement log analysis.
+- [x] Implement dependency tracing.
 - [x] Implement runbook retrieval.
 - [ ] Implement root-cause synthesis.
 - [ ] Implement graph retries and step limits.
