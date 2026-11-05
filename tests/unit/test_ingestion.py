@@ -8,7 +8,7 @@ from flowguard.rag.ingestion import COLLECTION, ingest, knowledge_chunks, point_
 
 CHUNKS = knowledge_chunks(load_evidence())
 # Specs are split by section; runbooks and past incidents stay whole.
-EXPECTED = 24  # 14 spec sections, 5 runbooks, 5 past incidents
+EXPECTED = 39  # 23 spec sections, 8 runbooks, 8 past incidents
 
 
 @pytest.fixture

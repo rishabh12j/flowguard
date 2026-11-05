@@ -3,6 +3,7 @@
 python -m flowguard.evaluation.investigations
 """
 
+import argparse
 import asyncio
 import math
 import statistics
@@ -11,6 +12,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, ConfigDict
@@ -102,8 +104,13 @@ class Metrics(Model):
     unsafe_proposals_blocked: int
 
 
+Split = Literal["tuning", "held_out"]
+
+
 class EvaluationReport(Model):
     model: str
+    # Held-out incidents are evaluated once and never used to tune FlowGuard.
+    split: Split = "tuning"
     finished_at: datetime
     incidents: list[IncidentResult]
     abstentions: list[AbstentionResult]
@@ -341,7 +348,8 @@ def shown(name: str, value: float | None) -> str:
 
 def render_markdown(report: EvaluationReport) -> str:
     lines = [
-        "# FlowGuard evaluation",
+        "# FlowGuard evaluation"
+        + (": held-out incidents" if report.split == "held_out" else ""),
         "",
         f"Model: `{report.model}`. Finished {report.finished_at:%Y-%m-%d %H:%M} UTC. "
         f"{len(report.incidents)} incidents, each run once with all evidence and once "
@@ -385,13 +393,29 @@ def render_markdown(report: EvaluationReport) -> str:
 
 def write_report(report: EvaluationReport, directory: Path = REPORTS_DIR) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "evaluation.json").write_text(
+    name = "evaluation-held-out" if report.split == "held_out" else "evaluation"
+    (directory / f"{name}.json").write_text(
         report.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
-    (directory / "evaluation.md").write_text(render_markdown(report), encoding="utf-8")
+    (directory / f"{name}.md").write_text(render_markdown(report), encoding="utf-8")
+
+
+def incidents_in(split: Split) -> list[str]:
+    return [
+        incident_id
+        for incident_id in incident_ids()
+        if load_ground_truth(incident_id).split == split
+    ]
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate FlowGuard on its incidents.")
+    parser.add_argument(
+        "--held-out",
+        action="store_true",
+        help="evaluate the held-out incidents, which are never used for tuning",
+    )
+    split: Split = "held_out" if parser.parse_args().held_out else "tuning"
     embedder = SentenceTransformerEmbedder()
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(load_evidence()), embedder, client)
@@ -400,11 +424,11 @@ def main() -> None:
         evaluate(
             lambda incident_id: llm,
             partial(retrieve, embedder=embedder, client=client),
-            incident_ids(),
+            incidents_in(split),
             MODEL,
             progress=lambda message: print(message, flush=True),
         )
-    )
+    ).model_copy(update={"split": split})
     write_report(report)
     print(render_markdown(report))
 

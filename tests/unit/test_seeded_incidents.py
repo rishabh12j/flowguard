@@ -34,8 +34,23 @@ def logs_in_window(incident_id: str):
 
 
 def test_there_are_seeded_incidents_with_ground_truth():
-    # The brief's catalogue: five incidents, each a different kind of failure.
-    assert INCIDENTS == ["INC-001", "INC-002", "INC-003", "INC-004", "INC-005"]
+    splits = {
+        incident_id: load_ground_truth(incident_id).split for incident_id in INCIDENTS
+    }
+    # The brief's catalogue, used for tuning, and three more held out from tuning.
+    assert [i for i, split in splits.items() if split == "tuning"] == [
+        "INC-001",
+        "INC-002",
+        "INC-003",
+        "INC-004",
+        "INC-005",
+    ]
+    assert [i for i, split in splits.items() if split == "held_out"] == [
+        "INC-006",
+        "INC-007",
+        "INC-008",
+    ]
+    # Each incident is a different kind of failure.
     categories = [load_ground_truth(incident_id).category for incident_id in INCIDENTS]
     assert len(set(categories)) == len(categories)
     for incident_id in INCIDENTS:

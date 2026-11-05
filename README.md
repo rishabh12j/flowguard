@@ -14,18 +14,19 @@ Incident  →  logs, deployments, alerts, metrics, dependency map   (MCP tools)
 
 ## What it does well, and what it doesn't
 
-On five seeded incidents, each a different kind of failure, FlowGuard with `gemma4:12b`:
+FlowGuard with `gemma4:12b`, on eight seeded incidents, each a different kind of failure. Five were used to tune it; three were held out and evaluated once, with nothing changed afterwards:
 
-| | Result |
-|---|---|
-| Diagnosed correctly | 5 of 5, after tuning (3 of 5 before); see the caveat below |
-| Required evidence gathered | 100% |
-| Unsafe actions planned | 0 |
-| Approval bypasses | 0 |
-| Abstained when its logs were withheld | 5 of 5 |
-| Median time per investigation | 46 s, on a local GPU |
+| | Tuning set (5) | Held out (3) |
+|---|---|---|
+| Diagnosed correctly | 5 of 5 (3 of 5 before tuning) | **3 of 3** |
+| Plan includes the reference fix steps | 80% | **67%**: two plans had no fixing step |
+| Required evidence gathered | 100% | 100% |
+| Unsafe actions planned | 0 | 0 |
+| Approval bypasses | 0 | 0 |
+| Abstained when its logs were withheld | 5 of 5 | 3 of 3 |
+| Median time per investigation | 46 s | 60 s |
 
-The 5 of 5 came after prompt changes written while looking at these same five incidents, so it partly measures that tuning. The untuned baseline is kept beside it in [`reports/`](reports/), and [`docs/evaluation.md`](docs/evaluation.md) explains both. The incidents are synthetic, and five is a small sample.
+The held-out set is the honest measure: diagnosis held up, including a case where the tuning could have misled it, but planning did not, so two incidents ended with a safe plan that wouldn't fix them. Eight synthetic incidents, written by the same person who built the system, is a small sample. [`docs/evaluation.md`](docs/evaluation.md) has the details, and every run is kept in [`reports/`](reports/).
 
 FlowGuard **recommends**: an approved plan is recorded, not run. There is no authentication, so anyone who can reach the API can approve. See [the threat model](docs/threat-model.md) for what that means.
 
