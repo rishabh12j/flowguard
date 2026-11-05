@@ -114,3 +114,13 @@
 - Added tool policies and `ToolGuard` for allowlists, call limits, and unknown arguments.
 - Added `GuardedClient`, which applies those checks and a timeout to every tool call.
 - Added metadata-aware chunking for API specs, runbooks, and historical incidents.
+
+## 2026-11-05
+
+- Added the evaluation runner, `python -m flowguard.evaluation.investigations`. It runs every seeded incident through the real stack and writes `reports/evaluation.json` and `reports/evaluation.md`.
+- Each incident also runs with log searches denied, to measure whether FlowGuard abstains when evidence is missing.
+- Metrics follow the brief: diagnosis accuracy (a root cause selected, in the right category), top-3 recall, evidence precision, required-evidence recall, tool-call success, latency, unsupported claims, unsafe actions (rechecked against the catalogue independently of validation), and approval bypasses. Plan recall and refused steps are reported too.
+- Ground truth gained `relevant_evidence_ids`, the other evidence that supports a diagnosis, so precision doesn't penalise good citations.
+- A test runs the whole evaluation with the oracle model, where every metric must be perfect, to check the runner before trusting its numbers.
+- First results with `gemma4:12b`: 3 of 5 incidents diagnosed correctly, 4 of 5 with the right category in the top 3, 97% evidence precision, 100% required-evidence recall, zero unsupported claims, zero unsafe actions, zero approval bypasses, and abstention in all 5 runs without logs. A second run gave the same results.
+- Known gaps, from the results: Gemma labels a configuration change's effect by its trigger (`deployment_or_configuration`) instead of its mechanism, in INC-004 and INC-005. In INC-004, a partly valid plan lost both its fix steps to validation and wasn't retried, so it ended with no fix.

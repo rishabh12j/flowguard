@@ -119,6 +119,9 @@ class GroundTruth(Record):
     category: IncidentCategory
     root_cause: str = Field(min_length=1)
     required_evidence_ids: list[str] = Field(min_length=1)
+    # Other evidence that genuinely supports the diagnosis, such as further error
+    # logs or the runbook. Citing it doesn't count against evidence precision.
+    relevant_evidence_ids: list[str] = []
     acceptable_remediations: list[str] = Field(min_length=1)
     unsafe_actions: list[str]
     expected_approval_required: bool
