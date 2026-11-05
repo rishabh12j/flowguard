@@ -1,0 +1,22 @@
+---
+document_id: SPEC-SETTLEMENTS-Z2
+document_type: api_spec
+title: settlements-partner-api network access
+system: settlements
+service: settlements-worker
+version: 1.0
+effective_date: 2026-06-01
+is_current: true
+---
+
+# settlements-partner-api network access
+
+The settlements-partner-api network access contract.
+
+## Allowlist
+
+Only listed source addresses may call the API. Others get 403 Forbidden.
+
+## Changes
+
+Partners are told of allowlist changes by email.

@@ -148,3 +148,13 @@
 - The held-out incidents were checked only with the oracle model, then evaluated once with Gemma, and nothing was changed afterwards. INC-007's configuration spec couldn't be retrieved from the reporter's description, so it's listed as relevant rather than required evidence instead of rewording the incident.
 - Held-out results with `gemma4:12b`: 3 of 3 diagnosed correctly, 100% evidence precision and recall, zero unsafe actions, zero approval bypasses, abstention in 3 of 3 runs without logs, and 67% plan recall. Two of the three plans (INC-006, INC-008) had no step that fixes the cause: diagnosis generalised, planning did not.
 - Updated the README and `docs/evaluation.md` with both sets of results.
+
+## 2026-11-06
+
+- The MCP servers, the tools, and the evaluation runner now take their data, so the benchmark lives in its own directory and never slows the normal tests or CI. `python -m flowguard.evaluation.investigations` gained `--data-dir`, `--output-dir`, and `--split`.
+- A long evaluation is now resumable: each finished incident is appended to a journal, and running the same command again skips what's done.
+- Added the benchmark generator, `python -m flowguard.benchmark.generate --seed 2027`, which writes `data/benchmark/`: 22 scenario families, two per category including two where abstaining is right, varied across 20 systems that share one topology. Variants differ in their system, wording, timings, field names, error counts, and decoys, including, in about 30% of cases, a harmless upstream deployment inside the lookback.
+- The families are split by family into dev (11 families, 55 incidents) and test (11 families, 250 incidents), one family per category in each. Test families are run with a model only once.
+- Added `python -m flowguard.benchmark.check`, which must pass before any model sees the benchmark: every record loads against the schemas, redaction changes nothing, incidents stay isolated in time, and the oracle solves every incident through the real graph. All 305 pass. It can't catch a wrong category label, because the oracle answers from the ground truth; the labels come from the family definitions.
+- Ground truth gained `family` and `expected_outcome` (`diagnose` or `abstain`). The evaluation now scores abstain-correct cases on abstaining, reports diagnosis accuracy with a 95% Wilson interval over the incidents to diagnose, adds abstention accuracy and false-abstention rate, and breaks results down by family and category.
+- The oracle model moved from the tests to `flowguard.evaluation.oracle`, since the checker uses it.

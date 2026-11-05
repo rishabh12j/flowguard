@@ -7,10 +7,10 @@ runner or the data is wrong, not the model.
 from functools import partial
 
 import pytest
-from oracle import Oracle
 
 from flowguard.dataset import incident_ids, load_ground_truth
 from flowguard.evaluation.investigations import evaluate, render_markdown, write_report
+from flowguard.evaluation.oracle import Oracle
 from flowguard.rag.retrieval import retrieve
 
 pytestmark = pytest.mark.anyio

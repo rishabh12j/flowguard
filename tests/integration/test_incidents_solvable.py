@@ -10,9 +10,9 @@ from functools import partial
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from oracle import Oracle
 
 from flowguard.dataset import incident_ids, load_ground_truth, load_incident
+from flowguard.evaluation.oracle import Oracle
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
 from flowguard.graph.context import Dependencies

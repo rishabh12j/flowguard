@@ -217,3 +217,65 @@ def test_the_summary_combines_every_run():
     assert metrics.latency_median_seconds == 30.0
     assert metrics.abstention_when_logs_are_missing == 0.5
     assert metrics.unsafe_action_rate == 0.0
+
+
+ABSTAIN_TRUTH = TRUTH.model_copy(
+    update={
+        "category": "unknown",
+        "expected_outcome": "abstain",
+        "reference_plan": [],
+        "family": "sporadic_nulls",
+    }
+)
+
+
+def test_abstaining_is_correct_when_the_truth_says_so():
+    result = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+        ),
+        ABSTAIN_TRUTH,
+        seconds=1,
+    )
+
+    assert result.correct is True
+    assert result.plan_recall is None
+    assert result.family == "sporadic_nulls"
+
+
+def test_diagnosing_an_abstain_case_is_wrong():
+    assert score_run(record(), ABSTAIN_TRUTH, seconds=1).correct is False
+
+
+def test_the_summary_separates_diagnosis_from_abstention():
+    diagnosed = score_run(record(), TRUTH, seconds=10)
+    missed = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+        ),
+        TRUTH,
+        seconds=10,
+    )
+    abstained = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+        ),
+        ABSTAIN_TRUTH,
+        seconds=10,
+    )
+
+    metrics = summarise([diagnosed, missed, abstained], [])
+
+    assert metrics.diagnosis_accuracy == 0.5
+    assert metrics.abstention_accuracy == 1.0
+    assert metrics.false_abstention_rate == 0.5
+    assert metrics.diagnosis_accuracy_interval == (0.095, 0.905)

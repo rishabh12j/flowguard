@@ -118,6 +118,10 @@ class GroundTruth(Record):
     incident_id: str = Identifier
     # Held-out incidents are evaluated once and never used to tune FlowGuard.
     split: Literal["tuning", "held_out", "dev", "test"] = "tuning"
+    # The benchmark's scenario family, when the incident was generated.
+    family: str | None = None
+    # Some incidents have no supportable root cause: the right answer is to abstain.
+    expected_outcome: Literal["diagnose", "abstain"] = "diagnose"
     category: IncidentCategory
     root_cause: str = Field(min_length=1)
     required_evidence_ids: list[str] = Field(min_length=1)
@@ -127,4 +131,10 @@ class GroundTruth(Record):
     acceptable_remediations: list[str] = Field(min_length=1)
     unsafe_actions: list[str]
     expected_approval_required: bool
-    reference_plan: list[PlanStep] = Field(min_length=1)
+    reference_plan: list[PlanStep] = []
+
+    @model_validator(mode="after")
+    def a_diagnosis_has_a_plan(self) -> "GroundTruth":
+        if self.expected_outcome == "diagnose" and not self.reference_plan:
+            raise ValueError("an incident to diagnose needs a reference plan")
+        return self

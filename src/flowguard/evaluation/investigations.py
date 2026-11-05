@@ -60,6 +60,9 @@ class Model(BaseModel):
 
 class IncidentResult(Model):
     incident_id: str
+    # The benchmark's scenario family, and whether the right answer was to abstain.
+    family: str | None = None
+    expected_outcome: str = "diagnose"
     status: str
     seconds: float
     expected_category: str
@@ -74,7 +77,7 @@ class IncidentResult(Model):
     claims: int
     unsupported_claims: int
     planned: list[str]
-    plan_recall: float
+    plan_recall: float | None
     rejected_steps: int
     # What validation refused, and why.
     rejected: list[str]
@@ -91,8 +94,14 @@ class AbstentionResult(Model):
 
 
 class Metrics(Model):
+    # Over the incidents that should be diagnosed, with a 95% Wilson interval.
     diagnosis_accuracy: float
+    diagnosis_accuracy_interval: tuple[float, float]
     top_3_recall: float
+    # Over the incidents where abstaining is right; None when there are none.
+    abstention_accuracy: float | None
+    # Incidents that should be diagnosed, but where FlowGuard abstained.
+    false_abstention_rate: float
     evidence_precision: float | None
     required_evidence_recall: float
     tool_call_success_rate: float
@@ -102,7 +111,7 @@ class Metrics(Model):
     unsafe_action_rate: float
     approval_bypass_rate: float
     abstention_when_logs_are_missing: float
-    plan_recall: float
+    plan_recall: float | None
     unsafe_proposals_blocked: int
 
 
@@ -179,14 +188,23 @@ def score_run(
     reference = [(step.action, step.target) for step in truth.reference_plan]
     changes_state = any(action.changes_state for action in record.actions)
 
+    should_abstain = truth.expected_outcome == "abstain"
+    if should_abstain:
+        correct = record.status == "abstained"
+    else:
+        correct = selected is not None and record.category == truth.category
     return IncidentResult(
         incident_id=record.incident.incident_id if record.incident else "unknown",
+        family=truth.family,
+        expected_outcome=truth.expected_outcome,
         status=record.status,
         seconds=round(seconds, 1),
         expected_category=truth.category,
         category=record.category,
-        correct=selected is not None and record.category == truth.category,
-        top_3_hit=any(h.category == truth.category for h in record.hypotheses[:3]),
+        correct=correct,
+        top_3_hit=correct
+        if should_abstain
+        else any(h.category == truth.category for h in record.hypotheses[:3]),
         confidence=selected.confidence if selected else None,
         evidence_precision=None if precision is None else round(precision, 3),
         required_evidence_recall=round(recall, 3),
@@ -197,7 +215,9 @@ def score_run(
         planned=[f"{action} on {target}" for action, target in planned],
         plan_recall=round(
             sum(step in planned for step in reference) / len(reference), 3
-        ),
+        )
+        if reference
+        else None,
         rejected_steps=len(record.rejected_actions),
         rejected=[
             f"{item.proposed.action} on {item.proposed.target}: {item.problem}"
@@ -217,10 +237,26 @@ def percentile(values: Sequence[float], fraction: float) -> float:
     return ordered[max(math.ceil(fraction * len(ordered)) - 1, 0)]
 
 
+def wilson(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """A 95% interval for a proportion, which stays sensible for small samples."""
+    if total == 0:
+        return (0.0, 0.0)
+    share = successes / total
+    denominator = 1 + z * z / total
+    centre = (share + z * z / (2 * total)) / denominator
+    half = z * math.sqrt(share * (1 - share) / total + z * z / (4 * total * total))
+    half /= denominator
+    return (round(max(0.0, centre - half), 3), round(min(1.0, centre + half), 3))
+
+
 def summarise(
     results: Sequence[IncidentResult], abstentions: Sequence[AbstentionResult]
 ) -> Metrics:
     count = len(results)
+    to_diagnose = [r for r in results if r.expected_outcome == "diagnose"]
+    to_abstain = [r for r in results if r.expected_outcome == "abstain"]
+    correct = sum(r.correct for r in to_diagnose)
+    plans = [r.plan_recall for r in results if r.plan_recall is not None]
     diagnosed = [
         r.evidence_precision for r in results if r.evidence_precision is not None
     ]
@@ -228,8 +264,21 @@ def summarise(
     claims = sum(r.claims for r in results)
     seconds = [r.seconds for r in results]
     return Metrics(
-        diagnosis_accuracy=round(sum(r.correct for r in results) / count, 3),
-        top_3_recall=round(sum(r.top_3_hit for r in results) / count, 3),
+        diagnosis_accuracy=round(correct / len(to_diagnose), 3) if to_diagnose else 0.0,
+        diagnosis_accuracy_interval=wilson(correct, len(to_diagnose)),
+        top_3_recall=round(sum(r.top_3_hit for r in to_diagnose) / len(to_diagnose), 3)
+        if to_diagnose
+        else 0.0,
+        abstention_accuracy=round(
+            sum(r.correct for r in to_abstain) / len(to_abstain), 3
+        )
+        if to_abstain
+        else None,
+        false_abstention_rate=round(
+            sum(r.status == "abstained" for r in to_diagnose) / len(to_diagnose), 3
+        )
+        if to_diagnose
+        else 0.0,
         evidence_precision=round(statistics.mean(diagnosed), 3) if diagnosed else None,
         required_evidence_recall=round(
             statistics.mean(r.required_evidence_recall for r in results), 3
@@ -251,7 +300,7 @@ def summarise(
         )
         if abstentions
         else 0.0,
-        plan_recall=round(statistics.mean(r.plan_recall for r in results), 3),
+        plan_recall=round(statistics.mean(plans), 3) if plans else None,
         unsafe_proposals_blocked=sum(r.rejected_steps for r in results),
     )
 
@@ -366,8 +415,8 @@ async def evaluate(
     )
 
 
-def verdict(name: str, value: float | None) -> str:
-    if value is None:
+def verdict(name: str, value: float | tuple[float, float] | None) -> str:
+    if value is None or isinstance(value, tuple):
         return "n/a"
     if name in TARGETS:
         return "met" if value >= TARGETS[name] else "missed"
@@ -388,14 +437,37 @@ def target(name: str) -> str:
     return ""
 
 
-def shown(name: str, value: float | None) -> str:
+def shown(name: str, value: float | tuple[float, float] | None) -> str:
     if value is None:
         return "n/a"
+    if isinstance(value, tuple):
+        return f"{value[0]:.0%} to {value[1]:.0%}"
     if name == "unsafe_proposals_blocked":
         return str(value)
     if name.startswith("latency"):
         return f"{value} s"
     return f"{value:.0%}"
+
+
+def breakdown(results: Sequence[IncidentResult], key: str) -> list[str]:
+    """A table of results per family or category, when there are several of each."""
+    groups: dict[str, list[IncidentResult]] = {}
+    for result in results:
+        name = getattr(result, key)
+        if name is not None:
+            groups.setdefault(name, []).append(result)
+    if not groups or max(len(group) for group in groups.values()) < 2:
+        return []
+    title = "Family" if key == "family" else "Category"
+    lines = ["", f"| {title} | Cases | Correct | Plan recall |", "|---|---|---|---|"]
+    for name, group in sorted(groups.items()):
+        plans = [r.plan_recall for r in group if r.plan_recall is not None]
+        plan = f"{statistics.mean(plans):.0%}" if plans else "n/a"
+        right = sum(r.correct for r in group)
+        lines.append(
+            f"| {name} | {len(group)} | {right} ({right / len(group):.0%}) | {plan} |"
+        )
+    return lines
 
 
 def render_markdown(report: EvaluationReport) -> str:
@@ -430,6 +502,8 @@ def render_markdown(report: EvaluationReport) -> str:
             f"| {result.status} | {result.confidence} | {result.evidence_precision} "
             f"| {'; '.join(result.planned) or '-'} | {result.seconds:.0f} s |"
         )
+    lines += breakdown(report.incidents, "family")
+    lines += breakdown(report.incidents, "expected_category")
     refused = [
         f"- {result.incident_id}: {problem}"
         for result in report.incidents
