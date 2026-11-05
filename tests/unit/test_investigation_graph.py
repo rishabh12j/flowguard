@@ -954,7 +954,7 @@ async def test_a_plan_with_nothing_left_is_tried_again_with_the_reasons():
     )
     retry_prompt = llm.calls[2][1]
     assert (
-        "Every step of your previous plan was refused:\n"
+        "nothing left in it fixes the cause:\n"
         "- disable_payload_validation on invoice-transformer: not an allowed action"
     ) in retry_prompt
 
@@ -1120,3 +1120,26 @@ async def test_an_alert_can_support_a_diagnosis_without_a_deployment():
 
     # 0.30 error + 0.20 timeline + 0.15 path + 0.15 specification.
     assert state["selected_root_cause"].confidence == 0.80
+
+
+async def test_a_plan_that_lost_its_fix_is_tried_again():
+    llm = diagnosing_llm(
+        actions=[
+            step("rollback_deployment", "supplier-api"),
+            step("add_contract_test", "supplier-api"),
+        ],
+        later_actions=[
+            step("rollback_deployment", "DEPLOY-SOURCE-221"),
+            step("add_contract_test", "supplier-api"),
+        ],
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert [action.action for action in state["actions"]] == [
+        "rollback_deployment",
+        "add_contract_test",
+    ]
+    assert state["actions"][0].target == "DEPLOY-SOURCE-221"
+    assert state["requires_approval"] is True
+    assert len(llm.calls) == 3

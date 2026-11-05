@@ -8,7 +8,7 @@ from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import RootCauseHypothesis
 from flowguard.domain.incidents import Incident
 from flowguard.domain.remediation import CATALOGUE
-from flowguard.graph.nodes.remediation import SYSTEM, propose_actions
+from flowguard.graph.nodes.remediation import SYSTEM, TARGET_NAMES, propose_actions
 from flowguard.graph.nodes.root_cause import InvalidProposal
 from flowguard.llm.client import LLMError
 
@@ -114,4 +114,7 @@ def test_a_model_failure_is_passed_on():
 
 def test_the_model_is_told_the_actions_it_may_use():
     for spec in CATALOGUE.values():
-        assert f"- {spec.name} (target: a {spec.target}): {spec.purpose}" in SYSTEM
+        assert (
+            f"- {spec.name} (target: {TARGET_NAMES[spec.target]}): {spec.purpose}"
+            in SYSTEM
+        )

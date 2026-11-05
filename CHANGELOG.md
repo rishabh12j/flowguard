@@ -124,3 +124,10 @@
 - A test runs the whole evaluation with the oracle model, where every metric must be perfect, to check the runner before trusting its numbers.
 - First results with `gemma4:12b`: 3 of 5 incidents diagnosed correctly, 4 of 5 with the right category in the top 3, 97% evidence precision, 100% required-evidence recall, zero unsupported claims, zero unsafe actions, zero approval bypasses, and abstention in all 5 runs without logs. A second run gave the same results.
 - Known gaps, from the results: Gemma labels a configuration change's effect by its trigger (`deployment_or_configuration`) instead of its mechanism, in INC-004 and INC-005. In INC-004, a partly valid plan lost both its fix steps to validation and wasn't retried, so it ended with no fix.
+- The first results are kept as `reports/evaluation-baseline.md` and `.json`.
+- A plan is now retried when validation refused steps and nothing left would fix the cause, not only when nothing is left. In INC-004, a plan that lost its rollback had kept only a contract test, a notification, and monitoring.
+- The remediation prompt names each target kind exactly: "a service name", or "a deployment ID, such as DEPLOY-SOURCE-221".
+- The category definitions and the root-cause prompt now say a configuration change's effect takes the category of what went wrong, and `deployment_or_configuration` is for a change that is broken in itself.
+- After these changes, with `gemma4:12b`: 5 of 5 incidents diagnosed correctly, 5 of 5 with the right category in the top 3, zero unsafe actions, zero approval bypasses, abstention in all 5 runs without logs, and median latency 46 s. The prompt changes were written after seeing these incidents fail, so this result partly measures that tuning, and new, unseen incidents are needed for an unbiased number.
+- Known gap: INC-004's plan still puts the file redelivery before the rollback, so validation refuses it, and the file isn't redelivered.
+- The evaluation report now lists each refused step with its reason, and every hypothesis's category.

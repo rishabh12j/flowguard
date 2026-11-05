@@ -1,8 +1,10 @@
 from langgraph.graph import END
 
+from flowguard.domain.remediation import CATALOGUE
 from flowguard.graph.state import InvestigationState
 
-# A plan whose every step was refused gets one more attempt, with the reasons.
+# A plan that lost the steps that would fix the cause gets one more attempt,
+# with the reasons.
 MAX_PLAN_ATTEMPTS = 2
 # A reviewer can send an investigation back for more evidence once.
 MAX_EVIDENCE_ROUNDS = 1
@@ -22,8 +24,13 @@ def after_root_cause(state: InvestigationState) -> str:
 
 
 def after_validation(state: InvestigationState) -> str:
-    nothing_left = not state.get("actions") and state.get("plan_problems")
-    if nothing_left and state.get("remediation_attempts", 1) < MAX_PLAN_ATTEMPTS:
+    # Steps were refused, and what's left wouldn't fix the cause: notifying the
+    # owner and adding monitoring don't stop the failure.
+    fixes_cause = any(
+        CATALOGUE[action.action].fixes_cause for action in state.get("actions", ())
+    )
+    incomplete = state.get("plan_problems") and not fixes_cause
+    if incomplete and state.get("remediation_attempts", 1) < MAX_PLAN_ATTEMPTS:
         return "remediation"
     return "audit"
 

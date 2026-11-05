@@ -23,12 +23,12 @@ CATEGORY_DEFINITIONS: dict[IncidentCategory, str] = {
     "authorisation": "a known caller was refused access it needs",
     "schema_contract_mismatch": "data was rejected because its structure, such as field names, types, or required fields, does not match the contract the receiver checks",
     "networking": "systems could not reach each other, such as DNS, refused connections, or TLS failures",
-    "timeout": "a call or job took longer than it was allowed",
+    "timeout": "a call or job took longer than it was allowed, including waiting too long for a connection or another limited resource",
     "rate_limiting": "requests were rejected for exceeding a quota or rate",
     "data_quality": "data had the expected structure but wrong, missing, or inconsistent values",
-    "file_transfer": "a file was not delivered, picked up, or read correctly",
+    "file_transfer": "a file was not delivered, picked up, or read correctly, including a file sent to the wrong place",
     "queue_or_event_processing": "messages were stuck, lost, duplicated, or processed out of order",
-    "deployment_or_configuration": "a released change or setting is itself faulty, and no other category describes the failure",
+    "deployment_or_configuration": "a released change or setting is broken in itself, such as a service that will not start; if a change made something else go wrong, use the category of what went wrong",
     "unknown": "the evidence does not show which category applies",
 }
 
