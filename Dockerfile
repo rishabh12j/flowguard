@@ -13,7 +13,8 @@ WORKDIR /app
 RUN pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Dependencies first, so a code change doesn't reinstall them.
-COPY pyproject.toml ./
+# The package metadata includes the licence, so the build needs it.
+COPY pyproject.toml LICENSE ./
 COPY src ./src
 # Editable, so the code finds the seeded data next to it, in /app/data.
 RUN pip install -e .

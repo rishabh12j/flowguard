@@ -114,6 +114,7 @@ CI runs the checks and builds the Docker image on every push. [`tests/unit/test_
 - [Architecture](docs/architecture.md): the components, the investigation graph, and the main design decisions.
 - [Threat model](docs/threat-model.md): what could go wrong, what stops it, the test that proves it, and the risks that remain.
 - [Evaluation](docs/evaluation.md): the method, the metrics, both sets of results, and their limits.
+- [Connectors](docs/connectors.md): the contract a connector to a real system must meet, and the connectors wanted.
 - [`brief.md`](brief.md): the original design brief, with dated notes where the build changed course.
 - [`CHANGELOG.md`](CHANGELOG.md): what changed, step by step.
 
@@ -132,3 +133,11 @@ src/flowguard/
 data/           Five seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
 reports/        Evaluation results
 ```
+
+## Contributing
+
+FlowGuard reads synthetic incidents today. The most useful next step is connectors to real systems, such as Loki, Prometheus, and GitHub, so it can investigate real incidents. [docs/connectors.md](docs/connectors.md) describes what a connector must do, and [CONTRIBUTING.md](CONTRIBUTING.md) explains how to send one.
+
+## Licence
+
+[Apache License 2.0](LICENSE).

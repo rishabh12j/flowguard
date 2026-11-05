@@ -1286,7 +1286,8 @@ Resolve these only when they become necessary:
 - [ ] Should Qdrant remain the long-term vector store?
 - [ ] Should audit storage move from SQLite to PostgreSQL?
 - [ ] Should the UI be Streamlit, React, or omitted?
-- [ ] Should live CloudWatch access be added after the synthetic demo?
+- [ ] Should live CloudWatch access be added after the synthetic demo? **Update 2026-11-05:** real-system access is left to contributors. [`docs/connectors.md`](docs/connectors.md) defines the contract a connector must meet; the first contribution wanted is a setting that points FlowGuard at an external MCP server.
+- [x] Under what licence, and how can others extend it? **Decided 2026-11-05:** Apache-2.0, for its explicit patent grant, which makes companies comfortable contributing. [`CONTRIBUTING.md`](CONTRIBUTING.md) sets the ground rules: read-only tools, code decides, a failing test for every rule, no secrets or real data, and no tuning on held-out or test sets.
 - [ ] Should remediation execution remain simulated?
 - [ ] Should authentication be added before public deployment?
 
