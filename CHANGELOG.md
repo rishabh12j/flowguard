@@ -142,3 +142,5 @@
 - Added a demo, `python -m flowguard.demo [--incident ID] [--approve | --reject REASON]`, which walks an incident through a running API: readiness, the investigation, the plan, the decision, the report, and the audit trail. Run against Docker Compose and Gemma, it took INC-002 to an approved plan.
 - Added `examples/requests.http`, sample requests for every route, including an invalid request and a second decision.
 - Added CI on GitHub Actions: ruff, formatting, mypy, and the full test suite on every push and pull request, plus a job that builds the Docker image. The workflow passes `actionlint`.
+- Added a README: what FlowGuard does, its results with their caveats, setup with and without Docker, the demo, the API, its safety controls, and the project layout.
+- Added `docs/architecture.md` (components, the investigation graph, evidence, the confidence rubric, state and audit, and the main design decisions), `docs/threat-model.md` (trust boundaries, each threat with its controls and the tests that prove them, and the risks that remain), and `docs/evaluation.md` (method, metric definitions, baseline and tuned results, and their limits).

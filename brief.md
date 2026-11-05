@@ -1150,7 +1150,7 @@ Each seeded incident should include:
 - [x] Save machine-readable results.
 - [x] Generate a concise evaluation report.
 - [ ] Record a demo video.
-- [ ] Add architecture and threat-model documents.
+- [x] Add architecture and threat-model documents.
 - [ ] Update resume only with measured claims.
 
 **Exit condition:** Every resume bullet can be supported by code, tests, or evaluation output.
@@ -1172,7 +1172,7 @@ The MVP is complete when:
 - [x] The complete stack runs through Docker Compose.
 - [x] Evaluation metrics are generated automatically.
 - [x] Unsafe-action and approval-bypass rates are zero.
-- [ ] The repository includes setup, architecture, threat model, evaluation, and demo documentation.
+- [x] The repository includes setup, architecture, threat model, evaluation, and demo documentation.
 
 ---
 
@@ -1181,15 +1181,15 @@ The MVP is complete when:
 Work in this order:
 
 - [x] Create the repository and Python package.
-- [ ] Implement domain models for incidents, evidence, hypotheses, and remediation.
+- [x] Implement domain models for incidents, evidence, hypotheses, and remediation.
 - [x] Build INC-001 and all supporting synthetic evidence.
 - [x] Write a deterministic Python script that solves INC-001 from the data.
 - [x] Expose the synthetic evidence through one MCP server.
 - [x] Add RAG over the runbook, API specification, and historical incident.
 - [x] Build a minimal LangGraph with intake → triage → retrieve → root_cause → audit. Triage became a category on each hypothesis; see section 10.
 - [x] Add FastAPI endpoints to start and inspect an investigation.
-- [ ] Add validation and approval nodes.
-- [ ] Expand from one incident to five and build the evaluation runner.
+- [x] Add validation and approval nodes.
+- [x] Expand from one incident to five and build the evaluation runner.
 
 The deterministic solver in step 4 is important. It proves the dataset is coherent before an LLM is introduced.
 
