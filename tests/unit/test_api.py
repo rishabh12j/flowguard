@@ -208,3 +208,44 @@ def test_a_decision_needs_an_approver(api):
 
     assert response.status_code == 422
     assert response.json() == {"detail": ["body.approver: Field required"]}
+
+
+def serve_with_checks(**checks) -> TestClient:
+    services = Services(
+        graph=build_graph(InMemorySaver(serde=SERIALIZER)),
+        llm=FakeLLM(),
+        audit=SqliteAuditStore(),
+        open_tools=Toolbox().open,
+        checks=checks,
+    )
+    return TestClient(create_app(lambda: nullcontext(services)))
+
+
+def test_ready_when_every_dependency_is():
+    with serve_with_checks(documents=lambda: True, model=lambda: True) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"documents": "ok", "model": "ok"},
+    }
+
+
+def test_not_ready_when_a_dependency_fails():
+    with serve_with_checks(documents=lambda: True, model=lambda: False) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {"documents": "ok", "model": "failing"}
+
+
+def test_a_check_that_crashes_is_failing_and_reveals_nothing():
+    def unreachable() -> bool:
+        raise ConnectionError("connect to 10.0.0.7:11434 refused")
+
+    with serve_with_checks(model=unreachable) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert "10.0.0.7" not in response.text

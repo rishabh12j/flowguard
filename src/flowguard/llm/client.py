@@ -25,6 +25,7 @@ class OllamaLLM:
         model: str = MODEL,
         *,
         client: httpx.Client | None = None,
+        base_url: str = OLLAMA_URL,
         temperature: float = 0.0,
         timeout_seconds: float = 300.0,
         retries: int = 2,
@@ -36,7 +37,7 @@ class OllamaLLM:
         self.retry_delay_seconds = retry_delay_seconds
         # The first call loads the model into memory, which took nearly three minutes in testing.
         self._client = client or httpx.Client(
-            base_url=OLLAMA_URL, timeout=timeout_seconds
+            base_url=base_url, timeout=timeout_seconds
         )
 
     def generate(self, system: str, prompt: str, schema: dict[str, Any]) -> str:

@@ -147,3 +147,9 @@ def test_each_retry_waits_longer(monkeypatch):
         OllamaLLM(client=client, retry_delay_seconds=2).generate("s", "p", SCHEMA)
 
     assert waits == [2, 4]
+
+
+def test_the_ollama_address_can_be_chosen():
+    llm = OllamaLLM(base_url="http://ollama:11434")
+
+    assert str(llm._client.base_url) == "http://ollama:11434"

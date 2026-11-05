@@ -131,3 +131,9 @@
 - After these changes, with `gemma4:12b`: 5 of 5 incidents diagnosed correctly, 5 of 5 with the right category in the top 3, zero unsafe actions, zero approval bypasses, abstention in all 5 runs without logs, and median latency 46 s. The prompt changes were written after seeing these incidents fail, so this result partly measures that tuning, and new, unseen incidents are needed for an unbiased number.
 - Known gap: INC-004's plan still puts the file redelivery before the rollback, so validation refuses it, and the file isn't redelivered.
 - The evaluation report now lists each refused step with its reason, and every hypothesis's category.
+- Added Docker Compose: `docker compose up --build` starts the API and a Qdrant server, with the audit records, paused investigations, and document index on named volumes. By default the API uses the Ollama on the host; `docker compose --profile ollama up` runs Ollama in a container too.
+- Added a `Dockerfile`: Python 3.13, CPU-only PyTorch, the embedding model built into the image so it starts offline, and a non-root user.
+- Added `GET /health/ready`, which checks the document index, the model in Ollama, and the audit store, and answers 503 without error details if any fails. `/health` stays a liveness check.
+- The Ollama address, the model, and a Qdrant server are now settings: `FLOWGUARD_OLLAMA_URL`, `FLOWGUARD_MODEL`, and `FLOWGUARD_QDRANT_URL`. Without a Qdrant URL, the index stays in memory.
+- Added `.env.example`, with every setting commented out, so copying it can't override the container's own values; and `.dockerignore`, which keeps `.env`, databases, and tests out of the image.
+- Verified in Docker: INC-001 diagnosed through the containers, the API container restarted while the investigation waited for approval, and the approval recorded afterwards.

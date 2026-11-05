@@ -1063,8 +1063,8 @@ Each seeded incident should include:
 
 - [x] Initialise Python project.
 - [x] Add linting, formatting, type checking, and tests.
-- [ ] Add `.env.example`.
-- [ ] Add Dockerfile and Compose skeleton.
+- [x] Add `.env.example`.
+- [x] Add Dockerfile and Compose skeleton.
 - [x] Add health endpoint.
 - [ ] Add CI workflow.
 
@@ -1132,8 +1132,10 @@ Each seeded incident should include:
 
 - [ ] Complete FastAPI endpoints.
 - [ ] Add structured error handling.
-- [ ] Add Docker Compose services.
-- [ ] Add health checks.
+- [x] Add Docker Compose services.
+- [x] Add health checks.
+
+> **Built 2026-11-05:** `docker compose up --build` starts the API and a Qdrant server (v1.19.2), with the audit records, paused investigations, and index on named volumes. The API uses the host's Ollama by default; `--profile ollama` adds an Ollama container (0.40.14). The image runs as a non-root user, uses CPU-only PyTorch, and has the embedding model built in, so it starts without the internet. `/health` is liveness; `/health/ready` checks the document index, the model in Ollama, and the audit store, and the container's health check uses it. Verified: INC-001 was diagnosed through the containers in 84 s, the API container was restarted while the investigation waited for approval, and the approval after the restart was recorded.
 - [ ] Add demo script.
 - [ ] Add sample API requests.
 
@@ -1165,7 +1167,7 @@ The MVP is complete when:
 - [x] Unsupported conclusions are rejected or marked uncertain.
 - [x] State-changing proposals require explicit approval.
 - [x] Every tool call and decision is audited.
-- [ ] The complete stack runs through Docker Compose.
+- [x] The complete stack runs through Docker Compose.
 - [x] Evaluation metrics are generated automatically.
 - [x] Unsafe-action and approval-bypass rates are zero.
 - [ ] The repository includes setup, architecture, threat model, evaluation, and demo documentation.
