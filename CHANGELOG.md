@@ -137,3 +137,8 @@
 - The Ollama address, the model, and a Qdrant server are now settings: `FLOWGUARD_OLLAMA_URL`, `FLOWGUARD_MODEL`, and `FLOWGUARD_QDRANT_URL`. Without a Qdrant URL, the index stays in memory.
 - Added `.env.example`, with every setting commented out, so copying it can't override the container's own values; and `.dockerignore`, which keeps `.env`, databases, and tests out of the image.
 - Verified in Docker: INC-001 diagnosed through the containers, the API container restarted while the investigation waited for approval, and the approval recorded afterwards.
+- Added `GET /investigations/{id}/report`: a readable Markdown report of the latest record, with the root cause and its confidence reasons, the evidence, each step's risk, approval, verification, and rollback, any refused steps, the decision, and problems met.
+- Every error is now JSON. An unexpected crash answers 500 with `{"detail": "internal error", "error_id": ...}`; the full traceback is logged on the server under the same ID, and nothing else reaches the caller.
+- Added a demo, `python -m flowguard.demo [--incident ID] [--approve | --reject REASON]`, which walks an incident through a running API: readiness, the investigation, the plan, the decision, the report, and the audit trail. Run against Docker Compose and Gemma, it took INC-002 to an approved plan.
+- Added `examples/requests.http`, sample requests for every route, including an invalid request and a second decision.
+- Added CI on GitHub Actions: ruff, formatting, mypy, and the full test suite on every push and pull request, plus a job that builds the Docker image. The workflow passes `actionlint`.

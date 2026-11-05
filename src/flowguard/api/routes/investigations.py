@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Response, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from flowguard.api.dependencies import Services, ServicesDep
@@ -10,6 +11,7 @@ from flowguard.domain.audit import DuplicateVersion, InvestigationRecord
 from flowguard.graph.builder import decide, investigate
 from flowguard.graph.context import Dependencies, EvidenceTools
 from flowguard.graph.nodes.intake import describe
+from flowguard.report import render_report
 
 router = APIRouter(prefix="/investigations")
 
@@ -61,6 +63,13 @@ def get_investigation(
     investigation_id: str, services: ServicesDep
 ) -> InvestigationRecord:
     return latest(services, investigation_id)
+
+
+@router.get("/{investigation_id}/report", response_class=PlainTextResponse)
+def get_report(investigation_id: str, services: ServicesDep) -> PlainTextResponse:
+    """The latest record as a readable Markdown report."""
+    record = latest(services, investigation_id)
+    return PlainTextResponse(render_report(record), media_type="text/markdown")
 
 
 @router.get("/{investigation_id}/events")

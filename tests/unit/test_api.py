@@ -166,6 +166,10 @@ def test_an_audit_failure_is_an_error_that_reveals_nothing():
 
     assert response.status_code == 500
     assert "disk full" not in response.text
+    # Still JSON, with an ID to quote that matches the server's log.
+    body = response.json()
+    assert body["detail"] == "internal error"
+    assert len(body["error_id"]) == 12
 
 
 def test_events_list_every_saved_version(api):
@@ -249,3 +253,18 @@ def test_a_check_that_crashes_is_failing_and_reveals_nothing():
 
     assert response.status_code == 503
     assert "10.0.0.7" not in response.text
+
+
+def test_a_report_is_readable_markdown(api):
+    started = api.post("/investigations", json=REQUEST).json()
+
+    response = api.get(f"/investigations/{started['investigation_id']}/report")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.text.startswith("# INC-001: unknown")
+    assert "## No conclusion" in response.text
+
+
+def test_the_report_of_an_unknown_investigation_is_not_found(api):
+    assert api.get("/investigations/INVEST-404/report").status_code == 404

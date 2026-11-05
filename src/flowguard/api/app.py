@@ -1,5 +1,7 @@
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -19,6 +21,26 @@ async def invalid_request(request: Request, error: Exception) -> JSONResponse:
     )
 
 
+logger = logging.getLogger("flowguard.api")
+
+
+async def unexpected_error(request: Request, error: Exception) -> JSONResponse:
+    # The caller gets an ID to quote. The details, which may name files, hosts,
+    # or data, go only to the server's log under the same ID.
+    error_id = uuid4().hex[:12]
+    logger.error(
+        "unexpected error %s on %s %s",
+        error_id,
+        request.method,
+        request.url.path,
+        exc_info=error,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "internal error", "error_id": error_id},
+    )
+
+
 def create_app(
     services_from: Callable[[], AbstractAsyncContextManager[Services]] = open_services,
 ) -> FastAPI:
@@ -32,6 +54,8 @@ def create_app(
 
     app = FastAPI(title="FlowGuard", lifespan=lifespan)
     app.add_exception_handler(RequestValidationError, invalid_request)
+    # Every error is JSON with a "detail", including a crash.
+    app.add_exception_handler(Exception, unexpected_error)
     app.include_router(health.router)
     app.include_router(investigations.router)
     return app

@@ -10,6 +10,7 @@ from flowguard.api.app import create_app
 from flowguard.api.dependencies import Services
 from flowguard.config import AUDIT_DB_VARIABLE, CHECKPOINT_DB_VARIABLE
 from flowguard.dataset import load_incident
+from flowguard.demo import run as run_demo
 from flowguard.domain.audit import DuplicateVersion
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
@@ -279,3 +280,28 @@ def test_a_decision_that_loses_a_race_is_a_conflict(client, embedder):
 
     assert response.status_code == 409
     assert response.json() == {"detail": "another decision was recorded first"}
+
+
+def test_the_demo_walks_inc_001_to_an_approval(client, embedder):
+    services = services_for(client, embedder)
+    said: list[str] = []
+
+    with TestClient(create_app(lambda: nullcontext(services))) as api:
+        status = run_demo(api, "INC-001", decision="approve", say=said.append)
+
+    output = "\n".join(said)
+    assert status == "approved"
+    assert "Status: awaiting_approval. Category: schema_contract_mismatch." in output
+    assert "# INC-001: schema_contract_mismatch" in output
+    assert "Audit trail: v1 awaiting_approval, v2 approved" in output
+
+
+def test_the_demo_stops_for_approval_without_a_decision(client, embedder):
+    services = services_for(client, embedder)
+    said: list[str] = []
+
+    with TestClient(create_app(lambda: nullcontext(services))) as api:
+        status = run_demo(api, "INC-001", say=said.append)
+
+    assert status == "awaiting_approval"
+    assert any("rerun with --approve" in line for line in said)

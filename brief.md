@@ -358,7 +358,7 @@ This node must be deterministic wherever possible.
 - Store tool calls, tool results, evidence IDs, model outputs, validation results, and approvals.
 - Produce a user-readable incident report.
 
-> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Since then, each stage saves a new version instead: the plan and its rejected steps (2026-11-04), then the approval decision. Versions are append-only, and `(investigation_id, version)` is unique, so two decisions can't both be saved. Retrieval now goes through MCP, so it appears in the tool calls too. Still missing: full tool results, raw model output, and the readable report.
+> **Built 2026-11-04 (partial):** every path, including rejected requests, ends in an append-only `InvestigationRecord` in SQLite, and the investigation fails if it can't be saved. The record stores each MCP call's arguments, outcome, item count, and duration; the evidence IDs; the scored hypotheses; and the validated incident, never the raw request. Since then, each stage saves a new version instead: the plan and its rejected steps (2026-11-04), then the approval decision. Versions are append-only, and `(investigation_id, version)` is unique, so two decisions can't both be saved. Retrieval now goes through MCP, so it appears in the tool calls too. The readable report is `GET /investigations/{id}/report` (2026-11-05). Still missing: full tool results and raw model output.
 
 ---
 
@@ -1066,7 +1066,7 @@ Each seeded incident should include:
 - [x] Add `.env.example`.
 - [x] Add Dockerfile and Compose skeleton.
 - [x] Add health endpoint.
-- [ ] Add CI workflow.
+- [x] Add CI workflow.
 
 **Exit condition:** API starts locally and tests run.
 
@@ -1130,14 +1130,16 @@ Each seeded incident should include:
 
 ### Milestone 6 — API and Docker demo
 
-- [ ] Complete FastAPI endpoints.
-- [ ] Add structured error handling.
+- [x] Complete FastAPI endpoints.
+- [x] Add structured error handling.
 - [x] Add Docker Compose services.
 - [x] Add health checks.
 
 > **Built 2026-11-05:** `docker compose up --build` starts the API and a Qdrant server (v1.19.2), with the audit records, paused investigations, and index on named volumes. The API uses the host's Ollama by default; `--profile ollama` adds an Ollama container (0.40.14). The image runs as a non-root user, uses CPU-only PyTorch, and has the embedding model built in, so it starts without the internet. `/health` is liveness; `/health/ready` checks the document index, the model in Ollama, and the audit store, and the container's health check uses it. Verified: INC-001 was diagnosed through the containers in 84 s, the API container was restarted while the investigation waited for approval, and the approval after the restart was recorded.
-- [ ] Add demo script.
-- [ ] Add sample API requests.
+- [x] Add demo script.
+- [x] Add sample API requests.
+
+> **Built 2026-11-05:** every route in section 19 exists except the two incident routes, which `POST /investigations` replaced (see the note under section 19). `GET /investigations/{id}/report` returns a readable Markdown report built from the audit record. Every error is JSON with a `detail`; an unexpected crash answers `{"detail": "internal error", "error_id": ...}`, and the traceback goes to the server's log under that ID. `python -m flowguard.demo` walks an incident through a running API, and `examples/requests.http` holds a sample request for every route. CI (`.github/workflows/ci.yml`) runs ruff, mypy, and the tests on every push and pull request, and builds the Docker image.
 
 **Exit condition:** A new user can run the demo from documented commands.
 
