@@ -19,12 +19,14 @@ from pydantic import BaseModel, ConfigDict
 from qdrant_client import QdrantClient
 
 from flowguard.dataset import (
+    DATA_DIR,
     incident_ids,
     load_evidence,
     load_ground_truth,
     load_incident,
 )
 from flowguard.domain.audit import InvestigationRecord
+from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
@@ -104,7 +106,12 @@ class Metrics(Model):
     unsafe_proposals_blocked: int
 
 
-Split = Literal["tuning", "held_out"]
+Split = Literal["tuning", "held_out", "dev", "test"]
+
+
+class JournalEntry(Model):
+    result: IncidentResult
+    abstention: AbstentionResult
 
 
 class EvaluationReport(Model):
@@ -250,14 +257,20 @@ def summarise(
 
 
 async def run_incident(
-    incident_id: str, llm: LLM, search: DocumentSearch, guard: ToolGuard | None = None
+    incident_id: str,
+    llm: LLM,
+    search: DocumentSearch,
+    guard: ToolGuard | None = None,
+    *,
+    data_dir: Path = DATA_DIR,
+    evidence: Sequence[EvidenceItem] | None = None,
 ) -> tuple[InvestigationRecord, float]:
     store = SqliteAuditStore()
     started = time.perf_counter()
-    async with open_evidence_tools(search, guard) as tools:
+    async with open_evidence_tools(search, guard, evidence=evidence) as tools:
         state = await investigate(
             build_graph(InMemorySaver(serde=SERIALIZER)),
-            load_incident(incident_id),
+            load_incident(incident_id, data_dir),
             Dependencies(tools=tools, llm=llm, audit=store),
         )
     seconds = time.perf_counter() - started
@@ -274,36 +287,75 @@ def without_logs() -> ToolGuard:
     )
 
 
+def read_journal(
+    journal: Path | None,
+) -> dict[str, tuple[IncidentResult, AbstentionResult]]:
+    """The incidents a previous, interrupted run already finished."""
+    done: dict[str, tuple[IncidentResult, AbstentionResult]] = {}
+    if journal is None or not journal.exists():
+        return done
+    for line in journal.read_text(encoding="utf-8").splitlines():
+        entry = JournalEntry.model_validate_json(line)
+        done[entry.result.incident_id] = (entry.result, entry.abstention)
+    return done
+
+
 async def evaluate(
     llm_for: Callable[[str], LLM],
     search: DocumentSearch,
     incidents: Sequence[str],
     model: str,
     progress: Callable[[str], None] = lambda message: None,
+    *,
+    data_dir: Path = DATA_DIR,
+    evidence: Sequence[EvidenceItem] | None = None,
+    journal: Path | None = None,
 ) -> EvaluationReport:
+    # Each finished incident is appended to the journal, so a long run that's
+    # interrupted can start again without repeating what it already did.
+    done = read_journal(journal)
     results = []
     abstentions = []
-    for incident_id in incidents:
-        truth = load_ground_truth(incident_id)
-        record, seconds = await run_incident(incident_id, llm_for(incident_id), search)
+    for number, incident_id in enumerate(incidents, start=1):
+        if incident_id in done:
+            result, abstention = done[incident_id]
+            results.append(result)
+            abstentions.append(abstention)
+            continue
+        truth = load_ground_truth(incident_id, data_dir)
+        record, seconds = await run_incident(
+            incident_id,
+            llm_for(incident_id),
+            search,
+            data_dir=data_dir,
+            evidence=evidence,
+        )
         result = score_run(record, truth, seconds)
         results.append(result)
-        progress(
-            f"{incident_id}: {result.status}, {result.category} "
-            f"(expected {result.expected_category}), {result.seconds:.0f}s"
-        )
 
         record, _ = await run_incident(
-            incident_id, llm_for(incident_id), search, without_logs()
+            incident_id,
+            llm_for(incident_id),
+            search,
+            without_logs(),
+            data_dir=data_dir,
+            evidence=evidence,
         )
-        abstentions.append(
-            AbstentionResult(
-                incident_id=incident_id,
-                status=record.status,
-                abstained=record.status == "abstained",
-            )
+        abstention = AbstentionResult(
+            incident_id=incident_id,
+            status=record.status,
+            abstained=record.status == "abstained",
         )
-        progress(f"{incident_id} without logs: {record.status}")
+        abstentions.append(abstention)
+        if journal is not None:
+            with journal.open("a", encoding="utf-8") as file:
+                entry = JournalEntry(result=result, abstention=abstention)
+                file.write(entry.model_dump_json() + "\n")
+        progress(
+            f"[{number}/{len(incidents)}] {incident_id}: {result.status}, "
+            f"{result.category} (expected {result.expected_category}), "
+            f"{result.seconds:.0f}s; without logs: {abstention.status}"
+        )
 
     return EvaluationReport(
         model=model,
@@ -349,7 +401,11 @@ def shown(name: str, value: float | None) -> str:
 def render_markdown(report: EvaluationReport) -> str:
     lines = [
         "# FlowGuard evaluation"
-        + (": held-out incidents" if report.split == "held_out" else ""),
+        + (
+            ""
+            if report.split == "tuning"
+            else f": {report.split.replace('_', '-')} set"
+        ),
         "",
         f"Model: `{report.model}`. Finished {report.finished_at:%Y-%m-%d %H:%M} UTC. "
         f"{len(report.incidents)} incidents, each run once with all evidence and once "
@@ -391,45 +447,64 @@ def render_markdown(report: EvaluationReport) -> str:
     return "\n".join(lines)
 
 
+def report_name(split: Split) -> str:
+    return (
+        "evaluation" if split == "tuning" else f"evaluation-{split.replace('_', '-')}"
+    )
+
+
 def write_report(report: EvaluationReport, directory: Path = REPORTS_DIR) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    name = "evaluation-held-out" if report.split == "held_out" else "evaluation"
+    name = report_name(report.split)
     (directory / f"{name}.json").write_text(
         report.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
     (directory / f"{name}.md").write_text(render_markdown(report), encoding="utf-8")
 
 
-def incidents_in(split: Split) -> list[str]:
+def incidents_in(split: Split, data_dir: Path = DATA_DIR) -> list[str]:
     return [
         incident_id
-        for incident_id in incident_ids()
-        if load_ground_truth(incident_id).split == split
+        for incident_id in incident_ids(data_dir)
+        if load_ground_truth(incident_id, data_dir).split == split
     ]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate FlowGuard on its incidents.")
     parser.add_argument(
-        "--held-out",
-        action="store_true",
-        help="evaluate the held-out incidents, which are never used for tuning",
+        "--split",
+        choices=["tuning", "held_out", "dev", "test"],
+        default="tuning",
+        help="which incidents to evaluate; held_out and test are evaluated once",
     )
-    split: Split = "held_out" if parser.parse_args().held_out else "tuning"
+    parser.add_argument(
+        "--held-out", action="store_true", help="the same as --split held_out"
+    )
+    parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    parser.add_argument("--output-dir", type=Path, default=REPORTS_DIR)
+    arguments = parser.parse_args()
+    split: Split = "held_out" if arguments.held_out else arguments.split
+
+    evidence = load_evidence(arguments.data_dir)
     embedder = SentenceTransformerEmbedder()
     client = QdrantClient(":memory:")
-    ingest(knowledge_chunks(load_evidence()), embedder, client)
+    ingest(knowledge_chunks(evidence), embedder, client)
     llm = OllamaLLM()
+    arguments.output_dir.mkdir(parents=True, exist_ok=True)
     report = asyncio.run(
         evaluate(
             lambda incident_id: llm,
             partial(retrieve, embedder=embedder, client=client),
-            incidents_in(split),
+            incidents_in(split, arguments.data_dir),
             MODEL,
             progress=lambda message: print(message, flush=True),
+            data_dir=arguments.data_dir,
+            evidence=evidence,
+            journal=arguments.output_dir / f"{report_name(split)}.journal.jsonl",
         )
     ).model_copy(update={"split": split})
-    write_report(report)
+    write_report(report, arguments.output_dir)
     print(render_markdown(report))
 
 

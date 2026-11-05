@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Protocol
 
 from mcp.server import MCPServer
@@ -10,9 +11,8 @@ from flowguard.domain.evidence import EvidenceItem
 
 MAX_TOP_K = 10
 
+# The seeded data, used when a server isn't given its own.
 EVIDENCE = load_evidence()
-DEPENDENCY_MAPS = [item for item in EVIDENCE if item.source_type == "dependency_map"]
-API_SPECS = [item for item in EVIDENCE if item.source_type == "api_spec"]
 
 
 class DocumentSearch(Protocol):
@@ -43,8 +43,14 @@ def is_requested_version(item: EvidenceItem, version: str | None) -> bool:
     return item.metadata["version"] == version
 
 
-def create_server(search: DocumentSearch | None = None) -> MCPServer:
+def create_server(
+    search: DocumentSearch | None = None,
+    evidence: Sequence[EvidenceItem] | None = None,
+) -> MCPServer:
     """The knowledge server. Without a search, it has no search_runbooks tool."""
+    source = EVIDENCE if evidence is None else evidence
+    dependency_maps = [item for item in source if item.source_type == "dependency_map"]
+    api_specs = [item for item in source if item.source_type == "api_spec"]
     server = MCPServer("knowledge-server")
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=True))
@@ -59,7 +65,7 @@ def create_server(search: DocumentSearch | None = None) -> MCPServer:
             raise ToolError("service must not be blank")
 
         return DependencyMapResult(
-            items=[item for item in DEPENDENCY_MAPS if contains_node(item, service)]
+            items=[item for item in dependency_maps if contains_node(item, service)]
         )
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=True))
@@ -79,7 +85,7 @@ def create_server(search: DocumentSearch | None = None) -> MCPServer:
         return ApiSpecResult(
             items=[
                 item
-                for item in API_SPECS
+                for item in api_specs
                 if item.source_name == service and is_requested_version(item, version)
             ]
         )

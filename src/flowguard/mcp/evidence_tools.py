@@ -1,5 +1,5 @@
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -16,7 +16,9 @@ from flowguard.mcp.clients import GuardedClient
 from flowguard.mcp.permissions import ToolDenied, ToolGuard
 from flowguard.mcp.servers.knowledge.server import DocumentSearch
 from flowguard.mcp.servers.knowledge.server import create_server as knowledge_server
-from flowguard.mcp.servers.observability.server import server as observability
+from flowguard.mcp.servers.observability.server import (
+    create_server as observability_server,
+)
 from flowguard.mcp.servers.operations.server import create_server as operations_server
 
 
@@ -125,15 +127,18 @@ def window(start_time: datetime, end_time: datetime) -> dict[str, Any]:
 async def open_evidence_tools(
     search: DocumentSearch,
     guard: ToolGuard | None = None,
+    *,
+    evidence: Sequence[EvidenceItem] | None = None,
 ) -> AsyncIterator[McpEvidenceTools]:
     # The search is required, so the investigation can't be wired up without a way
     # to find documents. It's shared, because loading the embedder is slow.
     # One guard is shared by every server, so the investigation has one record of its calls.
     guard = guard or ToolGuard()
     async with (
-        Client(observability) as observability_client,
-        Client(operations_server(search)) as operations_client,
-        Client(knowledge_server(search)) as knowledge_client,
+        # Without evidence, the servers serve the seeded data.
+        Client(observability_server(evidence)) as observability_client,
+        Client(operations_server(search, evidence)) as operations_client,
+        Client(knowledge_server(search, evidence)) as knowledge_client,
     ):
         yield McpEvidenceTools(
             GuardedClient(observability_client, guard),

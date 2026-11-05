@@ -5,6 +5,9 @@ from flowguard.mcp.servers.operations import server as module
 from flowguard.mcp.servers.operations.server import create_server, server
 
 pytestmark = pytest.mark.anyio
+PAST_INCIDENTS = [
+    item for item in module.EVIDENCE if item.source_type == "historical_incident"
+]
 
 LOOKBACK = {
     "start_time": "2026-07-14T09:43:17Z",
@@ -128,7 +131,7 @@ class RecordingSearch:
         self.calls.append(
             {"query": query, "system": system, "limit": limit, "type": document_type}
         )
-        return [module.PAST_INCIDENTS[0]]
+        return [PAST_INCIDENTS[0]]
 
 
 async def test_search_incidents_asks_only_for_past_incidents():
@@ -140,7 +143,7 @@ async def test_search_incidents_asks_only_for_past_incidents():
         {"query": "wrong directory", "system": "vendor-payments"},
     )
 
-    assert found(result) == [module.PAST_INCIDENTS[0].evidence_id]
+    assert found(result) == [PAST_INCIDENTS[0].evidence_id]
     assert search.calls == [
         {
             "query": "wrong directory",

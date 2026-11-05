@@ -62,3 +62,31 @@ async def test_the_report_is_written_as_json_and_markdown(report, tmp_path):
     summary = render_markdown(report)
     assert "| diagnosis accuracy | 100% | ≥ 80% | met |" in summary
     assert "| approval bypass rate | 0% | 0% | met |" in summary
+
+
+class Unreachable:
+    """A model that fails if it's used: a resumed run must not need it."""
+
+    def generate(self, system: str, prompt: str, schema: dict) -> str:
+        raise AssertionError("the journal should have answered for this incident")
+
+
+async def test_an_interrupted_run_resumes_from_its_journal(client, embedder, tmp_path):
+    journal = tmp_path / "evaluation.journal.jsonl"
+    search = partial(retrieve, embedder=embedder, client=client)
+    incidents = ["INC-001", "INC-002"]
+    first = await evaluate(
+        lambda incident_id: Oracle(load_ground_truth(incident_id)),
+        search,
+        incidents,
+        "oracle",
+        journal=journal,
+    )
+
+    resumed = await evaluate(
+        lambda incident_id: Unreachable(), search, incidents, "oracle", journal=journal
+    )
+
+    assert len(journal.read_text(encoding="utf-8").splitlines()) == 2
+    assert resumed.incidents == first.incidents
+    assert resumed.metrics == first.metrics

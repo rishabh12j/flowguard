@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 
 from mcp.server import MCPServer
@@ -11,11 +12,8 @@ from flowguard.mcp.servers.knowledge.server import MAX_TOP_K, DocumentSearch
 
 MAX_RESULTS = 20
 
+# The seeded data, used when a server isn't given its own.
 EVIDENCE = load_evidence()
-DEPLOYMENTS = [item for item in EVIDENCE if item.source_type == "deployment"]
-PAST_INCIDENTS = [
-    item for item in EVIDENCE if item.source_type == "historical_incident"
-]
 
 
 class DeploymentSearchResult(BaseModel):
@@ -33,8 +31,16 @@ def deployed_at(item: EvidenceItem) -> datetime:
     return item.timestamp
 
 
-def create_server(search: DocumentSearch | None = None) -> MCPServer:
+def create_server(
+    search: DocumentSearch | None = None,
+    evidence: Sequence[EvidenceItem] | None = None,
+) -> MCPServer:
     """The operations server. Without a search, it has no search_incidents tool."""
+    source = EVIDENCE if evidence is None else evidence
+    deployments = [item for item in source if item.source_type == "deployment"]
+    past_incidents = [
+        item for item in source if item.source_type == "historical_incident"
+    ]
     server = MCPServer("operations-server")
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=True))
@@ -56,7 +62,7 @@ def create_server(search: DocumentSearch | None = None) -> MCPServer:
 
         matches = [
             item
-            for item in DEPLOYMENTS
+            for item in deployments
             if start_time <= deployed_at(item) <= end_time
             and (service is None or item.source_name == service)
         ]
@@ -75,7 +81,7 @@ def create_server(search: DocumentSearch | None = None) -> MCPServer:
             raise ToolError("incident_id must not be blank")
 
         return IncidentResult(
-            items=[item for item in PAST_INCIDENTS if item.evidence_id == incident_id]
+            items=[item for item in past_incidents if item.evidence_id == incident_id]
         )
 
     if search is not None:

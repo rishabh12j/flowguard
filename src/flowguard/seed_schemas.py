@@ -117,7 +117,7 @@ class PlanStep(Record):
 class GroundTruth(Record):
     incident_id: str = Identifier
     # Held-out incidents are evaluated once and never used to tune FlowGuard.
-    split: Literal["tuning", "held_out"] = "tuning"
+    split: Literal["tuning", "held_out", "dev", "test"] = "tuning"
     category: IncidentCategory
     root_cause: str = Field(min_length=1)
     required_evidence_ids: list[str] = Field(min_length=1)

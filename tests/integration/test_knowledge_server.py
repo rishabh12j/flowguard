@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from mcp import Client
 
@@ -80,9 +82,17 @@ OLD_SPEC = EvidenceItem(
 )
 
 
+API_SPECS = [item for item in module.EVIDENCE if item.source_type == "api_spec"]
+
+
 @pytest.fixture
 def with_old_spec(monkeypatch):
-    monkeypatch.setattr(module, "API_SPECS", [OLD_SPEC, *module.API_SPECS])
+    # The tests' server is rebuilt with a superseded spec added to its data.
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "server",
+        create_server(evidence=[OLD_SPEC, *module.EVIDENCE]),
+    )
 
 
 async def api_spec(**arguments):
@@ -154,7 +164,7 @@ class RecordingSearch:
 
     def __call__(self, query, *, system, limit):
         self.calls.append((query, system, limit))
-        return [module.API_SPECS[0]]
+        return [API_SPECS[0]]
 
 
 async def search(search_function, **arguments):
@@ -170,7 +180,7 @@ async def test_search_runbooks_passes_the_query_system_and_limit():
     )
 
     assert result.is_error is False
-    assert ids(result) == [module.API_SPECS[0].evidence_id]
+    assert ids(result) == [API_SPECS[0].evidence_id]
     assert recording.calls == [("schema errors", "invoice-processing", 3)]
 
 
