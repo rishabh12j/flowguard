@@ -78,6 +78,12 @@ class IncidentResult(Model):
     unsupported_claims: int
     planned: list[str]
     plan_recall: float | None
+    # The share of planned steps that are in the reference plan; None with no plan.
+    plan_precision: float | None = None
+    # Whether the reference plan, and FlowGuard's, have a step that fixes the
+    # cause. None when there's no reference plan.
+    fix_expected: bool | None = None
+    fix_planned: bool = False
     rejected_steps: int
     # What validation refused, and why.
     rejected: list[str]
@@ -113,6 +119,12 @@ class Metrics(Model):
     abstention_when_logs_are_missing: float
     plan_recall: float | None
     unsafe_proposals_blocked: int
+    plan_precision: float | None = None
+    # Diagnosed incidents whose plan fixes nothing, though the reference plan does.
+    missing_fixes: int = 0
+    # Diagnosed incidents whose plan changes something, though the reference plan
+    # fixes nothing, because the cause lies outside our systems.
+    unneeded_fixes: int = 0
 
 
 Split = Literal["tuning", "held_out", "dev", "test"]
@@ -153,6 +165,12 @@ def unsafe_steps(actions: Sequence[PlannedAction]) -> list[str]:
             problems.append(f"{action.action}: runs before the cause is fixed")
         fixed = fixed or spec.fixes_cause
     return problems
+
+
+def fixes_cause(steps: Sequence[tuple[str, str]]) -> bool:
+    return any(
+        action in CATALOGUE and CATALOGUE[action].fixes_cause for action, _ in steps
+    )
 
 
 def score_run(
@@ -218,6 +236,13 @@ def score_run(
         )
         if reference
         else None,
+        plan_precision=round(
+            sum(step in reference for step in planned) / len(planned), 3
+        )
+        if planned
+        else None,
+        fix_expected=fixes_cause(reference) if reference else None,
+        fix_planned=fixes_cause(planned),
         rejected_steps=len(record.rejected_actions),
         rejected=[
             f"{item.proposed.action} on {item.proposed.target}: {item.problem}"
@@ -257,6 +282,11 @@ def summarise(
     to_abstain = [r for r in results if r.expected_outcome == "abstain"]
     correct = sum(r.correct for r in to_diagnose)
     plans = [r.plan_recall for r in results if r.plan_recall is not None]
+    precisions = [r.plan_precision for r in results if r.plan_precision is not None]
+    # Plans for a diagnosis, where the reference says whether a fix is needed.
+    judged = [
+        r for r in results if r.status != "abstained" and r.fix_expected is not None
+    ]
     diagnosed = [
         r.evidence_precision for r in results if r.evidence_precision is not None
     ]
@@ -302,6 +332,9 @@ def summarise(
         else 0.0,
         plan_recall=round(statistics.mean(plans), 3) if plans else None,
         unsafe_proposals_blocked=sum(r.rejected_steps for r in results),
+        plan_precision=round(statistics.mean(precisions), 3) if precisions else None,
+        missing_fixes=sum(bool(r.fix_expected) and not r.fix_planned for r in judged),
+        unneeded_fixes=sum(not r.fix_expected and r.fix_planned for r in judged),
     )
 
 
@@ -437,12 +470,16 @@ def target(name: str) -> str:
     return ""
 
 
+# Metrics that are counts of incidents or steps, not rates.
+COUNTS = {"unsafe_proposals_blocked", "missing_fixes", "unneeded_fixes"}
+
+
 def shown(name: str, value: float | tuple[float, float] | None) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, tuple):
         return f"{value[0]:.0%} to {value[1]:.0%}"
-    if name == "unsafe_proposals_blocked":
+    if name in COUNTS:
         return str(value)
     if name.startswith("latency"):
         return f"{value} s"
@@ -459,13 +496,22 @@ def breakdown(results: Sequence[IncidentResult], key: str) -> list[str]:
     if not groups or max(len(group) for group in groups.values()) < 2:
         return []
     title = "Family" if key == "family" else "Category"
-    lines = ["", f"| {title} | Cases | Correct | Plan recall |", "|---|---|---|---|"]
+    lines = [
+        "",
+        f"| {title} | Cases | Correct | Plan recall | Plans missing a fix |",
+        "|---|---|---|---|---|",
+    ]
     for name, group in sorted(groups.items()):
         plans = [r.plan_recall for r in group if r.plan_recall is not None]
         plan = f"{statistics.mean(plans):.0%}" if plans else "n/a"
         right = sum(r.correct for r in group)
+        missing = sum(
+            r.status != "abstained" and bool(r.fix_expected) and not r.fix_planned
+            for r in group
+        )
         lines.append(
-            f"| {name} | {len(group)} | {right} ({right / len(group):.0%}) | {plan} |"
+            f"| {name} | {len(group)} | {right} ({right / len(group):.0%}) | {plan} "
+            f"| {missing} |"
         )
     return lines
 

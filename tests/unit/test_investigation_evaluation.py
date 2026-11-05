@@ -279,3 +279,54 @@ def test_the_summary_separates_diagnosis_from_abstention():
     assert metrics.abstention_accuracy == 1.0
     assert metrics.false_abstention_rate == 0.5
     assert metrics.diagnosis_accuracy_interval == (0.095, 0.905)
+
+
+def test_plan_precision_counts_steps_outside_the_reference():
+    result = score_run(
+        record(
+            actions=(
+                step("update_field_mapping", "invoice-transformer"),
+                step("notify_service_owner", "supplier-api"),
+            )
+        ),
+        TRUTH,
+        seconds=1,
+    )
+
+    assert result.plan_precision == 0.5
+    assert (result.fix_expected, result.fix_planned) == (True, True)
+
+
+# The cause lies with a provider, so the reference plan only tells its owner.
+NO_FIX_TRUTH = GroundTruth.model_validate(
+    {
+        **TRUTH.model_dump(),
+        "reference_plan": [
+            {"action": "notify_service_owner", "target": "supplier-api"}
+        ],
+    }
+)
+
+
+def test_the_summary_counts_missing_and_unneeded_fixes():
+    notify_only = (step("notify_service_owner", "supplier-api"),)
+    missing = score_run(record(actions=notify_only), TRUTH, seconds=1)
+    unneeded = score_run(record(), NO_FIX_TRUTH, seconds=1)
+    right = score_run(record(actions=notify_only), NO_FIX_TRUTH, seconds=1)
+    # An abstention made no plan, so it can't miss a fix.
+    abstained = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+        ),
+        TRUTH,
+        seconds=1,
+    )
+
+    metrics = summarise([missing, unneeded, right, abstained], [])
+
+    assert (metrics.missing_fixes, metrics.unneeded_fixes) == (1, 1)
+    assert abstained.plan_precision is None
+    assert metrics.plan_precision == round((0 + 0 + 1) / 3, 3)
