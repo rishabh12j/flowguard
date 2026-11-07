@@ -61,8 +61,9 @@ def solved(record: InvestigationRecord, truth: GroundTruth) -> list[str]:
         return problems
     if record.category != truth.category:
         problems.append(f"category {record.category}, expected {truth.category}")
-    if selected.confidence < MIN_CONFIDENCE:
-        problems.append(f"confidence {selected.confidence}")
+    support = selected.support if selected.support is not None else 0.0
+    if support < MIN_CONFIDENCE:
+        problems.append(f"support {support}")
     planned = [{"action": a.action, "target": a.target} for a in record.actions]
     if planned != [step.model_dump() for step in truth.reference_plan]:
         problems.append(f"plan {planned}")

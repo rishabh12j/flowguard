@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from flowguard.domain.confidence import score
+from flowguard.domain.confidence import lead, score
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import ProposedHypothesis
 
@@ -206,3 +206,30 @@ def test_only_a_deployment_earns_the_deployment_signal():
 
     assert "cites a deployment" not in reason
     assert "a cited change came before the first failure" in reason
+
+
+@pytest.mark.parametrize(
+    ("others", "expected"),
+    [
+        # With no other category, the confidence is the support.
+        ([("timeout", 0.85)], (0.85, None)),
+        ([("timeout", 0.85), ("timeout", 0.40)], (0.85, None)),
+        # A rival in another category takes its score off.
+        (
+            [("timeout", 0.85), ("networking", 0.55)],
+            (0.30, "-0.55 the best other category, networking, scored 0.55"),
+        ),
+        # Only the strongest rival counts.
+        (
+            [("timeout", 0.85), ("networking", 0.20), ("authorisation", 0.45)],
+            (0.40, "-0.45 the best other category, authorisation, scored 0.45"),
+        ),
+        # A rival that scores higher leaves no lead, not a negative one.
+        (
+            [("timeout", 0.65), ("networking", 0.90)],
+            (0.0, "-0.90 the best other category, networking, scored 0.90"),
+        ),
+    ],
+)
+def test_confidence_is_the_lead_over_the_best_other_category(others, expected):
+    assert lead("timeout", others[0][1], others) == expected

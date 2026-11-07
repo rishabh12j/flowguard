@@ -8,6 +8,9 @@ from flowguard.domain.incidents import Incident
 from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.evaluation.investigations import (
     AbstentionResult,
+    IncidentResult,
+    auroc,
+    calibration,
     percentile,
     score_run,
     summarise,
@@ -330,3 +333,88 @@ def test_the_summary_counts_missing_and_unneeded_fixes():
     assert (metrics.missing_fixes, metrics.unneeded_fixes) == (1, 1)
     assert abstained.plan_precision is None
     assert metrics.plan_precision == round((0 + 0 + 1) / 3, 3)
+
+
+def test_every_hypothesis_is_kept_with_its_score():
+    first = hypothesis("LOG-882", number=1).model_copy(
+        update={
+            "confidence": 0.9,
+            "confidence_reason": "+0.30 cites an error log",
+            "support": 0.9,
+        }
+    )
+    second = hypothesis("DEPLOY-SOURCE-221", category="timeout", number=2)
+
+    result = score_run(record(hypotheses=(first, second)), TRUTH, seconds=1)
+
+    assert [(h.category, h.confidence) for h in result.hypotheses] == [
+        ("schema_contract_mismatch", 0.9),
+        ("timeout", 0.9),
+    ]
+    assert result.hypotheses[0].confidence_reason == "+0.30 cites an error log"
+    assert result.hypotheses[1].supporting_evidence_ids == ["DEPLOY-SOURCE-221"]
+    # Kept so the rubric can be re-scored; None in records from before support.
+    assert [h.support for h in result.hypotheses] == [0.9, None]
+
+
+@pytest.mark.parametrize(
+    ("scores", "expected"),
+    [
+        # Every right answer scored above every wrong one.
+        ([(0.9, True), (0.7, False)], 1.0),
+        # Every wrong answer scored higher: confidence points the wrong way.
+        ([(0.65, True), (0.9, False)], 0.0),
+        # A tie tells you nothing.
+        ([(0.75, True), (0.75, False)], 0.5),
+        ([(0.9, True), (0.65, True), (0.75, False)], 0.5),
+        # With no wrong answers, there's nothing to separate.
+        ([(0.9, True), (0.65, True)], None),
+    ],
+)
+def test_auroc(scores, expected):
+    assert auroc(scores) == expected
+
+
+def test_the_summary_measures_calibration():
+    def scored(confidence: float, category: str) -> IncidentResult:
+        chosen = hypothesis("LOG-882").model_copy(update={"confidence": confidence})
+        return score_run(
+            record(hypotheses=(chosen,), category=category), TRUTH, seconds=1
+        )
+
+    # High confidence is a lead of 0.5 or more.
+    results = [
+        scored(0.9, "schema_contract_mismatch"),
+        scored(0.9, "timeout"),
+        scored(0.3, "schema_contract_mismatch"),
+        scored(0.45, "schema_contract_mismatch"),
+    ]
+
+    metrics = summarise(results, [])
+
+    assert metrics.high_confidence_accuracy == 0.5
+    assert metrics.moderate_confidence_accuracy == 1.0
+    # The wrong answer, at 0.9, beats both moderate right answers and ties the other.
+    assert metrics.confidence_auroc == round(0.5 / 3, 3)
+    table = calibration(results)
+    assert "| 0.90 | 2 | 1 (50%) |" in table
+    assert "| 0.30 | 1 | 1 (100%) |" in table
+
+
+def test_an_abstention_has_no_confidence_to_calibrate():
+    abstained = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+        ),
+        TRUTH,
+        seconds=1,
+    )
+
+    metrics = summarise([abstained], [])
+
+    assert metrics.confidence_auroc is None
+    assert metrics.high_confidence_accuracy is None
+    assert calibration([abstained]) == []

@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, ConfigDict
@@ -31,7 +31,7 @@ from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
 from flowguard.graph.context import Dependencies
-from flowguard.llm.client import LLM, MODEL, OllamaLLM
+from flowguard.llm.client import LLM, MODEL, LLMError, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.mcp.permissions import POLICIES, ToolGuard
 from flowguard.mcp.servers.knowledge.server import DocumentSearch
@@ -56,6 +56,19 @@ UNSUPPORTED_CLAIM_LIMIT = 0.05
 
 class Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class HypothesisResult(Model):
+    """One scored hypothesis, kept so a rubric can be re-scored without a model run."""
+
+    category: str
+    # The lead over the best other category; before 2026-11-07, the support.
+    confidence: float
+    # The rubric's reasons, such as "+0.30 cites an error log".
+    confidence_reason: str
+    supporting_evidence_ids: list[str]
+    # The rubric's score of its evidence. None in runs from before 2026-11-07.
+    support: float | None = None
 
 
 class IncidentResult(Model):
@@ -91,6 +104,9 @@ class IncidentResult(Model):
     hypothesis_categories: list[str]
     unsafe_steps: list[str]
     approval_bypassed: bool
+    # Every hypothesis with its score, best first. Empty in runs made before it was
+    # recorded.
+    hypotheses: list[HypothesisResult] = []
 
 
 class AbstentionResult(Model):
@@ -125,6 +141,13 @@ class Metrics(Model):
     # Diagnosed incidents whose plan changes something, though the reference plan
     # fixes nothing, because the cause lies outside our systems.
     unneeded_fixes: int = 0
+    # Calibration, over every incident where a root cause was selected. AUROC is
+    # the chance that a right answer scored higher than a wrong one: 0.5 means
+    # confidence says nothing about being right, 1.0 that it separates them.
+    confidence_auroc: float | None = None
+    # Accuracy in the brief's bands: high is a lead of 0.5 and above, moderate below.
+    high_confidence_accuracy: float | None = None
+    moderate_confidence_accuracy: float | None = None
 
 
 Split = Literal["tuning", "held_out", "dev", "test"]
@@ -253,6 +276,16 @@ def score_run(
         # Nobody approves during an evaluation, so a state-changing plan must be
         # left waiting for a person.
         approval_bypassed=changes_state and record.status != "awaiting_approval",
+        hypotheses=[
+            HypothesisResult(
+                category=h.category,
+                confidence=h.confidence,
+                confidence_reason=h.confidence_reason,
+                supporting_evidence_ids=list(h.supporting_evidence_ids),
+                support=h.support,
+            )
+            for h in record.hypotheses
+        ],
     )
 
 
@@ -272,6 +305,38 @@ def wilson(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
     half = z * math.sqrt(share * (1 - share) / total + z * z / (4 * total * total))
     half /= denominator
     return (round(max(0.0, centre - half), 3), round(min(1.0, centre + half), 3))
+
+
+# Confidence is the lead over the best other category (brief section on the
+# confidence rubric, decided 2026-11-07). The runs before then used 0.85 on the
+# rubric score, which is what confidence was.
+HIGH_CONFIDENCE = 0.5
+
+
+def auroc(scores: Sequence[tuple[float, bool]]) -> float | None:
+    """The chance that a random right answer scored higher than a random wrong one.
+
+    A tie counts as half. None when every answer was right, or every one wrong.
+    """
+    right = [score for score, correct in scores if correct]
+    wrong = [score for score, correct in scores if not correct]
+    if not right or not wrong:
+        return None
+    wins = sum(
+        1.0 if good > bad else 0.5 if good == bad else 0.0
+        for good in right
+        for bad in wrong
+    )
+    return round(wins / (len(right) * len(wrong)), 3)
+
+
+def band_accuracy(results: Sequence[IncidentResult], high: bool) -> float | None:
+    band = [
+        r
+        for r in results
+        if r.confidence is not None and (r.confidence >= HIGH_CONFIDENCE) == high
+    ]
+    return round(sum(r.correct for r in band) / len(band), 3) if band else None
 
 
 def summarise(
@@ -335,7 +400,51 @@ def summarise(
         plan_precision=round(statistics.mean(precisions), 3) if precisions else None,
         missing_fixes=sum(bool(r.fix_expected) and not r.fix_planned for r in judged),
         unneeded_fixes=sum(not r.fix_expected and r.fix_planned for r in judged),
+        confidence_auroc=auroc(
+            [(r.confidence, r.correct) for r in results if r.confidence is not None]
+        ),
+        high_confidence_accuracy=band_accuracy(results, high=True),
+        moderate_confidence_accuracy=band_accuracy(results, high=False),
     )
+
+
+class ModelUnavailable(Exception):
+    """The model failed to answer, so the run stops instead of scoring the failure.
+
+    Not an LLMError, so the graph's nodes don't catch it and turn it into an
+    abstention. A resumed run then retries the incident.
+    """
+
+
+class Watched:
+    """A model whose failures stop an evaluation.
+
+    In service, a model that can't answer means FlowGuard abstains, which is
+    right. In an evaluation, it would be scored as the model's choice, and the
+    journal would keep it, so a resume would never retry it. An answer that
+    breaks the schema still counts: that is the model's behaviour, not an outage.
+    """
+
+    def __init__(self, llm: LLM) -> None:
+        self.llm = llm
+
+    def generate(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
+        try:
+            return self.llm.generate(system, prompt, schema)
+        except LLMError as error:
+            raise ModelUnavailable(str(error)) from error
+
+
+def outage_in(group: BaseExceptionGroup) -> ModelUnavailable | None:
+    # The MCP sessions run in nested task groups, which wrap what the graph raised.
+    for error in group.exceptions:
+        if isinstance(error, ModelUnavailable):
+            return error
+        if isinstance(error, BaseExceptionGroup):
+            found = outage_in(error)
+            if found is not None:
+                return found
+    return None
 
 
 async def run_incident(
@@ -349,12 +458,18 @@ async def run_incident(
 ) -> tuple[InvestigationRecord, float]:
     store = SqliteAuditStore()
     started = time.perf_counter()
-    async with open_evidence_tools(search, guard, evidence=evidence) as tools:
-        state = await investigate(
-            build_graph(InMemorySaver(serde=SERIALIZER)),
-            load_incident(incident_id, data_dir),
-            Dependencies(tools=tools, llm=llm, audit=store),
-        )
+    try:
+        async with open_evidence_tools(search, guard, evidence=evidence) as tools:
+            state = await investigate(
+                build_graph(InMemorySaver(serde=SERIALIZER)),
+                load_incident(incident_id, data_dir),
+                Dependencies(tools=tools, llm=llm, audit=store),
+            )
+    except BaseExceptionGroup as group:
+        outage = outage_in(group)
+        if outage is None:
+            raise
+        raise ModelUnavailable(f"{incident_id}: {outage}") from outage
     seconds = time.perf_counter() - started
     record = store.get(state["investigation_id"])
     if record is None:
@@ -407,7 +522,7 @@ async def evaluate(
         truth = load_ground_truth(incident_id, data_dir)
         record, seconds = await run_incident(
             incident_id,
-            llm_for(incident_id),
+            Watched(llm_for(incident_id)),
             search,
             data_dir=data_dir,
             evidence=evidence,
@@ -417,7 +532,7 @@ async def evaluate(
 
         record, _ = await run_incident(
             incident_id,
-            llm_for(incident_id),
+            Watched(llm_for(incident_id)),
             search,
             without_logs(),
             data_dir=data_dir,
@@ -472,6 +587,8 @@ def target(name: str) -> str:
 
 # Metrics that are counts of incidents or steps, not rates.
 COUNTS = {"unsafe_proposals_blocked", "missing_fixes", "unneeded_fixes"}
+# Metrics that are scores between 0 and 1, not shares.
+SCORES = {"confidence_auroc"}
 
 
 def shown(name: str, value: float | tuple[float, float] | None) -> str:
@@ -481,6 +598,8 @@ def shown(name: str, value: float | tuple[float, float] | None) -> str:
         return f"{value[0]:.0%} to {value[1]:.0%}"
     if name in COUNTS:
         return str(value)
+    if name in SCORES:
+        return f"{value:.2f}"
     if name.startswith("latency"):
         return f"{value} s"
     return f"{value:.0%}"
@@ -512,6 +631,23 @@ def breakdown(results: Sequence[IncidentResult], key: str) -> list[str]:
         lines.append(
             f"| {name} | {len(group)} | {right} ({right / len(group):.0%}) | {plan} "
             f"| {missing} |"
+        )
+    return lines
+
+
+def calibration(results: Sequence[IncidentResult]) -> list[str]:
+    """How often each confidence score was right, when several answers were scored."""
+    groups: dict[float, list[IncidentResult]] = {}
+    for result in results:
+        if result.confidence is not None:
+            groups.setdefault(result.confidence, []).append(result)
+    if sum(len(group) for group in groups.values()) < 2:
+        return []
+    lines = ["", "| Confidence | Answers | Right |", "|---|---|---|"]
+    for score, group in sorted(groups.items()):
+        right = sum(r.correct for r in group)
+        lines.append(
+            f"| {score:.2f} | {len(group)} | {right} ({right / len(group):.0%}) |"
         )
     return lines
 
@@ -550,6 +686,7 @@ def render_markdown(report: EvaluationReport) -> str:
         )
     lines += breakdown(report.incidents, "family")
     lines += breakdown(report.incidents, "expected_category")
+    lines += calibration(report.incidents)
     refused = [
         f"- {result.incident_id}: {problem}"
         for result in report.incidents
@@ -612,18 +749,24 @@ def main() -> None:
     ingest(knowledge_chunks(evidence), embedder, client)
     llm = OllamaLLM()
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
-    report = asyncio.run(
-        evaluate(
-            lambda incident_id: llm,
-            partial(retrieve, embedder=embedder, client=client),
-            incidents_in(split, arguments.data_dir),
-            MODEL,
-            progress=lambda message: print(message, flush=True),
-            data_dir=arguments.data_dir,
-            evidence=evidence,
-            journal=arguments.output_dir / f"{report_name(split)}.journal.jsonl",
-        )
-    ).model_copy(update={"split": split})
+    try:
+        report = asyncio.run(
+            evaluate(
+                lambda incident_id: llm,
+                partial(retrieve, embedder=embedder, client=client),
+                incidents_in(split, arguments.data_dir),
+                MODEL,
+                progress=lambda message: print(message, flush=True),
+                data_dir=arguments.data_dir,
+                evidence=evidence,
+                journal=arguments.output_dir / f"{report_name(split)}.journal.jsonl",
+            )
+        ).model_copy(update={"split": split})
+    except ModelUnavailable as error:
+        raise SystemExit(
+            f"Stopped: the model failed on {error}. Finished incidents are kept; "
+            "check Ollama, then run the same command again to resume."
+        ) from error
     write_report(report, arguments.output_dir)
     print(render_markdown(report))
 

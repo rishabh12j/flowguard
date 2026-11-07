@@ -14,7 +14,24 @@ Incident  →  logs, deployments, alerts, metrics, dependency map   (MCP tools)
 
 ## What it does well, and what it doesn't
 
-FlowGuard with `gemma4:12b`, on eight seeded incidents, each a different kind of failure. Five were used to tune it; three were held out and evaluated once, with nothing changed afterwards:
+FlowGuard with `gemma4:12b`, on a generated benchmark: 250 test incidents from 11 scenario families that were never used during development, run once, with nothing changed afterwards.
+
+| | Test set (250) |
+|---|---|
+| Diagnosed correctly | **186 of 228, 82%** (95% interval 76% to 86%) |
+| Abstained where the evidence supports no cause | 22 of 22 |
+| Abstained wrongly | 2% |
+| Required evidence gathered | 100% |
+| Unsafe actions planned | **0** |
+| Approval bypasses | **0** |
+| Abstained when its logs were withheld | 250 of 250 |
+| Plan includes the reference fix steps | 80% |
+| Confidence separates right answers from wrong | **No**: AUROC 0.34, where 0.5 is chance. A fix chosen afterwards scored 0.50 on fresh incidents |
+| Median time per investigation | 46 s |
+
+Seven of the eleven families were diagnosed 99% of the time. The misses came from four. In two, Gemma named the release that triggered the failure, not what broke: a dropped index or a cut replica count. Even then, its plan rolled back the right release in 21 of 22 cases. In encoding_change, Gemma mixed up a file's encoding with its schema. In provider_outage, Gemma sometimes abstained when the evidence did support the cause. On the 55 development incidents it scored 92%, so the test set found a real drop. The confidence score is also misleading: answers at 0.9 or above were right 13 of 27 times, and answers at 0.65 were right 52 of 52 times, because the rubric rewards citing a release. Reporting confidence as the lead over the best rival in another category looked better on a development set, then failed its one check on 110 fresh incidents (AUROC 0.50), so confidence still says nothing about whether an answer is right. The incidents are synthetic, and one person wrote both them and FlowGuard. Variants of one family behave alike, so the interval is narrower than it should be. [`docs/evaluation.md`](docs/evaluation.md#benchmark) has the details and the limits.
+
+Before the benchmark, FlowGuard was tuned on five hand-written incidents, and three more were held out and evaluated once:
 
 | | Tuning set (5) | Held out (3) |
 |---|---|---|
@@ -26,7 +43,7 @@ FlowGuard with `gemma4:12b`, on eight seeded incidents, each a different kind of
 | Abstained when its logs were withheld | 5 of 5 | 3 of 3 |
 | Median time per investigation | 46 s | 60 s |
 
-The held-out set is the honest measure: diagnosis held up, including a case where the tuning could have misled it, but planning did not, so two incidents ended with a safe plan that wouldn't fix them. Eight synthetic incidents, written by the same person who built the system, is a small sample. [`docs/evaluation.md`](docs/evaluation.md) has the details, and every run is kept in [`reports/`](reports/).
+Eight incidents is a small sample, which is why the benchmark was built. Every run is kept in [`reports/`](reports/).
 
 FlowGuard **recommends**: an approved plan is recorded, not run. There is no authentication, so anyone who can reach the API can approve. See [the threat model](docs/threat-model.md) for what that means.
 
@@ -102,10 +119,12 @@ The full list, with the test for each threat, is in [the threat model](docs/thre
 
 ```powershell
 ruff check . ; ruff format --check . ; mypy src
-pytest                                          # about 510 tests, no model needed
+pytest                                          # about 550 tests, no model needed
 pytest -m llm                                   # 2 tests against the real model
-python -m flowguard.evaluation.investigations   # all five incidents with Gemma, about 6 minutes
+python -m flowguard.evaluation.investigations   # the five tuning incidents with Gemma, about 6 minutes
 ```
+
+The benchmark's commands, which take hours, are in [`docs/evaluation.md`](docs/evaluation.md#reproducing).
 
 CI runs the checks and builds the Docker image on every push. [`tests/unit/test_safety.py`](tests/unit/test_safety.py) covers each threat in the brief with a model that obeys injected instructions, to show the controls don't depend on the model behaving.
 
@@ -130,8 +149,10 @@ src/flowguard/
   llm/          Ollama client
   storage/      Append-only audit store
   evaluation/   Retrieval and investigation evaluations
-data/           Five seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
-reports/        Evaluation results
+  benchmark/    The benchmark's scenario families, generator, and checker
+data/           Eight seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
+data/benchmark/ The generated benchmark: 305 incidents
+reports/        Evaluation results; the benchmark's are in reports/benchmark/
 ```
 
 ## Contributing

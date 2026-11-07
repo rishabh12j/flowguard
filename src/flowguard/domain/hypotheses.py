@@ -63,5 +63,10 @@ class RootCauseHypothesis(ProposedHypothesis):
     """A proposed hypothesis after code has scored its confidence."""
 
     hypothesis_id: str = Field(pattern=r"^\S+$")
+    # How far its support leads the best hypothesis of another category.
     confidence: float = Field(ge=0, le=1)
     confidence_reason: str
+    # The rubric's score of its evidence, which ranks hypotheses and decides
+    # whether to abstain. None in records from before 2026-11-07, when the
+    # confidence was this score.
+    support: float | None = Field(default=None, ge=0, le=1)

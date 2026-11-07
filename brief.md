@@ -505,6 +505,10 @@ Tune this rubric through evaluation rather than presenting it as universally cor
 
 > **Decided 2026-11-04:** "timeline correlation" and "dependency-path match" count any cited *change*: a deployment, an alert, or a metric that crossed its threshold, at or upstream of the failing service and within 24 hours before the first failure. The first version counted deployments only, so a cause that isn't a release (INC-002's expired credential, INC-003's burst traffic) could score at most 0.55 and was always abstained on. "Deployment correlation" (+0.10) still needs a cited deployment. A metric that never crossed its threshold isn't a change and earns nothing.
 
+> **Decided 2026-11-07:** the rubric's score is now each hypothesis's *support*. It still ranks the hypotheses, and the best one still needs 0.65 or the investigation abstains. The reported *confidence* is the best hypothesis's lead: its support minus the best support of a hypothesis in another category, or the support itself when there is none. High confidence is a lead of 0.5 or more, and moderate is below that. The reason is that the rubric counts what kinds of evidence a hypothesis cites, not whether the evidence points to its category, so a wrong cause citing a release outscored the right one. On the 250 test incidents, answers scored 0.9 or more were right 13 of 27 times, against 52 of 52 at 0.65 (AUROC 0.34). On the 2028 development set, with the model asked for alternatives in other categories, answers leading by 0.5 or more were right 93% of the time, against 81% for the rest (AUROC 0.64, from 0.37). Abstaining on a small lead was rejected: it would have lost more right answers than wrong ones. The rule was chosen from 10 wrong answers, so it is confirmed once on a fresh set, `data/benchmark-2029`.
+
+> **Result 2026-11-07: the confirmation failed.** On `data/benchmark-2029`, AUROC was 0.50 (the old score's was 0.48), and answers leading by 0.5 or more were right 83% of the time, against 93% for the rest. The rule stays as it is, and it is not tuned on 2029. Confidence is therefore not calibrated, and nothing may present a high confidence as more likely to be right. A revised rule needs a new seed.
+
 ---
 
 ## 15. MCP design
@@ -994,6 +998,12 @@ The target must be zero.
 > After three changes (`reports/evaluation.md`, one run): diagnosis accuracy 5/5, top-3 recall 5/5, evidence precision 96%, required-evidence recall 100%, tool-call success 100%, unsupported claims 0%, unsafe actions 0%, approval bypasses 0%, abstention with logs denied 5/5, plan recall 80%, median latency 46 s. The changes: (1) a plan is retried when validation refused steps and nothing left fixes the cause, not only when nothing is left; (2) the action list names each target kind exactly ("a deployment ID, such as DEPLOY-SOURCE-221"); (3) the category definitions and prompt say a configuration change's effect takes the category of what went wrong. Change 1 is a general design fix. Changes 2 and 3 were written after seeing these five incidents fail, so the 5/5 partly measures that tuning: new incidents, unseen while tuning, are needed for an unbiased number. Remaining weakness: INC-004's plan still put the redelivery before the rollback, so validation refused it and the file isn't redelivered.
 >
 > **Held out, 2026-11-05** (`reports/evaluation-held-out.md`): three incidents written after the tuning (INC-006 duplicate refunds, INC-007 a missing setting, INC-008 a dropped DNS record), checked only with the oracle, then evaluated once with nothing changed afterwards. Diagnosis 3/3, including INC-007, where `deployment_or_configuration` is correct and the tuned rule could have misled it; evidence precision and recall 100%; unsafe actions and approval bypasses 0; abstention without logs 3/3. Plan recall 67%: in INC-006 and INC-008 the plan had no step that fixes the cause, so diagnosis generalised and planning did not.
+>
+> **Benchmark, 2026-11-05** (`reports/benchmark/`, `docs/evaluation.md`). There are 305 generated incidents from 22 families, split by family into dev (55) and test (250). The test set was run once, with nothing changed afterwards.
+> - Test results: diagnosis 186/228 (82%, 95% Wilson interval 76% to 86%). The target is met on the point estimate but not with confidence. Top-3 recall was 88%, missing its 100% target, which was set for five seeded incidents.
+> - Safety on test: right abstentions 22/22, false abstentions 2%, abstention without logs 250/250, unsafe actions 0%, approval bypasses 0%, plan recall 80%.
+> - Dev scored 92%. The drop comes from four families. The rule "a change's effect takes the category of what went wrong" held for 93% of the dev incidents it applied to and 68% of the test ones. Gemma blamed the triggering release 21 times, but still planned the right rollback in 21 of 22 of those cases.
+> - The interval treats variants of one family as independent, so it is too narrow: this is closer to 11 scenarios than 228 incidents.
 
 ### Initial MVP targets
 
@@ -1008,6 +1018,8 @@ The target must be zero.
 | Approval-bypass rate | 0% |
 
 Do not put these numbers on the resume until the evaluation has actually been run.
+
+> **2026-11-05:** run. The resume should use the benchmark's test numbers, with their interval and the synthetic, single-author caveat, not the 5/5 from the tuning set.
 
 ---
 

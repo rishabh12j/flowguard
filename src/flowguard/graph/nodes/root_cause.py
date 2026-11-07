@@ -3,9 +3,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from langgraph.runtime import Runtime
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from flowguard.domain.confidence import score
+from flowguard.domain.confidence import lead, score
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import (
     CATEGORY_DEFINITIONS,
@@ -18,15 +18,20 @@ from flowguard.graph.context import Dependencies
 from flowguard.graph.state import InvestigationState
 from flowguard.llm.client import LLM, LLMError
 
-# The brief's line between moderate and insufficient confidence.
+# The brief's line between moderate and insufficient confidence. Since
+# 2026-11-07 it applies to the best hypothesis's support, its evidence score.
 MIN_CONFIDENCE = 0.65
+# How many hypotheses the model must propose, so each answer has an alternative.
+MIN_HYPOTHESES = 2
 # The nodes that gather evidence. Only their errors are missing sources.
 EVIDENCE_NODES = ("log_analysis", "dependency_trace", "runbook_retrieval", "follow_up")
 
 
 SYSTEM = (
-    "You are an incident investigator. Propose up to three root-cause hypotheses, "
+    "You are an incident investigator. Propose two or three root-cause hypotheses, "
     "most likely first, using only the evidence provided. Cite evidence by its ID. "
+    "Give each hypothesis a different category. Even when one cause seems clear, "
+    "include the strongest alternative, so the evidence can be weighed against it. "
     "Separate the root cause from downstream symptoms. "
     "Give each hypothesis the category of what failed, not of the change that "
     "triggered it: a configuration change that sends files to the wrong place is "
@@ -54,6 +59,9 @@ class InvalidProposal(Exception):
 
 def proposal_schema(evidence_ids: list[str]) -> dict[str, Any]:
     schema = HypothesisProposal.model_json_schema()
+    # Code still accepts one hypothesis, but the model must offer an alternative,
+    # so the best answer's score can be weighed against a rival's.
+    schema["properties"]["hypotheses"]["minItems"] = MIN_HYPOTHESES
     fields = schema["$defs"]["ProposedHypothesis"]["properties"]
     # Restricting citations to known IDs means the model cannot write an invented one.
     for name in ("supporting_evidence_ids", "contradicting_evidence_ids"):
@@ -94,7 +102,7 @@ def propose_hypotheses(
     evidence: Sequence[EvidenceItem],
     llm: LLM,
     reviewer_request: str | None = None,
-) -> tuple[ProposedHypothesis, ...]:
+) -> tuple[tuple[ProposedHypothesis, ...], tuple[str, ...]]:
     if not evidence:
         raise ValueError("there is no evidence to reason about")
 
@@ -104,23 +112,56 @@ def propose_hypotheses(
         build_prompt(incident, evidence, reviewer_request),
         proposal_schema(evidence_ids),
     )
+    return parse_proposal(text, set(evidence_ids))
+
+
+class Answer(BaseModel):
+    """The answer's outline, before each hypothesis is checked on its own."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hypotheses: list[dict[str, Any]] = Field(min_length=1, max_length=3)
+
+
+def parse_proposal(
+    text: str, known: set[str]
+) -> tuple[tuple[ProposedHypothesis, ...], tuple[str, ...]]:
+    """The hypotheses that keep the rules, and why each of the others was dropped.
+
+    One broken hypothesis, often a weak alternative, shouldn't throw away the
+    rest. An answer with no usable hypothesis is rejected.
+    """
     try:
-        proposal = HypothesisProposal.model_validate_json(text)
+        answer = Answer.model_validate_json(text)
     except ValidationError as error:
         raise InvalidProposal(
             f"the answer broke the schema in {error.error_count()} places"
         ) from error
 
-    # The schema should already prevent this, but the check must not rely on Ollama.
-    known = set(evidence_ids)
-    for hypothesis in proposal.hypotheses:
+    usable = []
+    dropped = []
+    for number, raw in enumerate(answer.hypotheses, start=1):
+        try:
+            hypothesis = ProposedHypothesis.model_validate(raw)
+        except ValidationError as error:
+            reasons = "; ".join(detail["msg"] for detail in error.errors())
+            dropped.append(f"hypothesis {number} broke the schema: {reasons}")
+            continue
+        # The schema should already prevent this, but the check must not rely on Ollama.
         cited = {
             *hypothesis.supporting_evidence_ids,
             *hypothesis.contradicting_evidence_ids,
         }
         if cited - known:
-            raise InvalidProposal(f"cites unknown evidence: {sorted(cited - known)}")
-    return proposal.hypotheses
+            dropped.append(
+                f"hypothesis {number} cites unknown evidence: {sorted(cited - known)}"
+            )
+            continue
+        usable.append(hypothesis)
+
+    if not usable:
+        raise InvalidProposal("no usable hypothesis: " + "; ".join(dropped))
+    return tuple(usable), tuple(dropped)
 
 
 # A plain def, so LangGraph runs it in a thread and the slow model call does not
@@ -133,7 +174,7 @@ def root_cause(
         return {"abstention": "no evidence was gathered", "category": "unknown"}
 
     try:
-        proposals = propose_hypotheses(
+        proposals, dropped = propose_hypotheses(
             state["incident"],
             evidence,
             runtime.context.llm,
@@ -151,35 +192,46 @@ def root_cause(
     missing_sources = sum(
         1 for error in state.get("errors", ()) if error.startswith(EVIDENCE_NODES)
     )
+    scored = [
+        (proposal, *score(proposal, by_id, state.get("first_failure"), missing_sources))
+        for proposal in proposals
+    ]
+    supports = [(proposal.category, support) for proposal, support, _ in scored]
     hypotheses = []
-    for number, proposal in enumerate(proposals, start=1):
-        confidence, reason = score(
-            proposal, by_id, state.get("first_failure"), missing_sources
-        )
+    for number, (proposal, support, reason) in enumerate(scored, start=1):
+        confidence, against = lead(proposal.category, support, supports)
         hypotheses.append(
             RootCauseHypothesis(
                 **proposal.model_dump(),
                 hypothesis_id=f"HYP-{number}",
                 confidence=confidence,
-                confidence_reason=reason,
+                confidence_reason=f"{reason}; {against}" if against else reason,
+                support=support,
             )
         )
 
-    # Code ranks the hypotheses, so the model's ordering doesn't decide the answer.
-    ranked = tuple(sorted(hypotheses, key=lambda item: item.confidence, reverse=True))
+    # Code ranks the hypotheses by their evidence, so the model's ordering doesn't
+    # decide the answer. The confidence then says how contested the answer is.
+    ranked = tuple(
+        sorted(hypotheses, key=lambda item: item.support or 0.0, reverse=True)
+    )
     best = ranked[0]
-    if best.confidence < MIN_CONFIDENCE:
+    support = best.support or 0.0
+    # A dropped hypothesis is kept in the record, so a reviewer can see it.
+    problems = tuple(f"root_cause: dropped {reason}" for reason in dropped)
+    if support < MIN_CONFIDENCE:
         return {
             "hypotheses": ranked,
             "abstention": (
-                f"the best hypothesis scored {best.confidence:.2f}, "
-                f"below {MIN_CONFIDENCE:.2f}"
+                f"the best hypothesis scored {support:.2f}, below {MIN_CONFIDENCE:.2f}"
             ),
             # An unconfirmed hypothesis's category is unconfirmed too.
             "category": "unknown",
+            "errors": problems,
         }
     return {
         "hypotheses": ranked,
         "selected_root_cause": best,
         "category": best.category,
+        "errors": problems,
     }

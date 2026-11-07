@@ -3,6 +3,7 @@
 from collections import Counter
 
 from flowguard.domain.audit import InvestigationRecord
+from flowguard.domain.hypotheses import RootCauseHypothesis
 
 STATUS_MEANING = {
     "diagnosed": "Diagnosed. The plan changes nothing, so it needs no approval.",
@@ -13,6 +14,16 @@ STATUS_MEANING = {
     "declined": "The plan was declined.",
     "more_evidence_requested": "A reviewer asked for more evidence.",
 }
+
+
+def scores(hypothesis: RootCauseHypothesis) -> str:
+    # Records from before 2026-11-07 have only a confidence, which was the support.
+    if hypothesis.support is None:
+        return f"confidence {hypothesis.confidence:.2f}"
+    return (
+        f"confidence {hypothesis.confidence:.2f}, "
+        f"evidence score {hypothesis.support:.2f}"
+    )
 
 
 def render_report(record: InvestigationRecord) -> str:
@@ -47,8 +58,7 @@ def render_report(record: InvestigationRecord) -> str:
             "",
             "## Root cause",
             "",
-            f"{selected.description} ({selected.category}, confidence "
-            f"{selected.confidence:.2f})",
+            f"{selected.description} ({selected.category}, {scores(selected)})",
             "",
             f"- **Why this confidence:** {selected.confidence_reason}",
             f"- **Evidence:** {', '.join(selected.supporting_evidence_ids)}",
@@ -56,10 +66,7 @@ def render_report(record: InvestigationRecord) -> str:
     others = [h for h in record.hypotheses if h is not selected]
     if others:
         lines += ["", "Other hypotheses considered:", ""]
-        lines += [
-            f"- {h.description} ({h.category}, confidence {h.confidence:.2f})"
-            for h in others
-        ]
+        lines += [f"- {h.description} ({h.category}, {scores(h)})" for h in others]
     if record.abstention:
         lines += [
             "",

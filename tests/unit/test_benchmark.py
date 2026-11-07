@@ -96,3 +96,13 @@ def test_the_topology_has_no_cycles():
 )
 def test_wilson_intervals(successes, total, interval):
     assert wilson(successes, total) == interval
+
+
+def test_a_development_set_gives_every_family_the_same_variants_all_dev():
+    bench = generate(7, dev_variants=2, development=True)
+    truths = list(bench.truths.values())
+
+    assert len(truths) == 2 * len(FAMILIES)
+    assert {truth["split"] for truth in truths} == {"dev"}
+    families = [truth["family"] for truth in truths]
+    assert all(families.count(family.name) == 2 for family in FAMILIES)

@@ -1,6 +1,8 @@
 # Evaluation
 
-How well FlowGuard diagnoses incidents, and how safely it plans, with `gemma4:12b`: on five incidents used for tuning, and on three held out from tuning and evaluated once.
+How well FlowGuard diagnoses incidents, and how safely it plans, with `gemma4:12b`: on five incidents used for tuning, on three held out from tuning and evaluated once, and on a generated benchmark of 305 incidents, whose 250 test incidents were run once with nothing changed afterwards.
+
+**The headline:** on the 250 test incidents, FlowGuard diagnosed 186 of 228 correctly (**82%, 95% interval 76% to 86%**), abstained correctly on 22 of 22, planned no unsafe action, and bypassed approval in none. Diagnosis was 99% on seven of the eleven test families and 39% to 83% on the other four. [Benchmark](#benchmark) has the details.
 
 ## Method
 
@@ -102,10 +104,127 @@ Every plan was safe, and validation did its job, but a safe plan can still leave
 
 One data finding: INC-007's reporter description didn't retrieve the email sender's configuration spec above the 0.6 threshold. Rather than reword the incident to suit retrieval, the spec is listed as relevant, not required, evidence.
 
+## Benchmark
+
+Eight hand-written incidents can't say much: each one moves accuracy by 12 points or more. So a generator writes many more, from scenario *families*.
+
+### How it was built
+
+- **22 families, two per category.** Each family is a scenario, such as "a release cut the worker's replicas from 6 to 1". In two of them, abstaining is the right answer: the evidence doesn't support any cause.
+- **Variants.** `python -m flowguard.benchmark.generate --seed 2027` writes several variants of each family across 20 systems that share one topology. Variants differ in their system, wording, timings, field names, error counts, and decoys. In about 30% of cases, a decoy is a harmless upstream deployment inside the lookback.
+- **Split by family, not by incident.** 11 families (55 incidents) are for development, and 11 others (250 incidents) are the test set, with one family per category in each. Splitting by family means no test incident is just a reworded dev incident.
+- **Checked before any model saw it.** `python -m flowguard.benchmark.check` loads every record against the schemas and confirms that redaction changes nothing. It also checks that incidents stay isolated in time, and that the oracle model solves every incident through the real graph. It can't catch a wrong category label, because the oracle answers from the ground truth.
+- **Run once.** The dev set could be used for fixes. The test set was run once, on 2026-11-05, and nothing was changed afterwards.
+
+Abstain-aware scoring: diagnosis accuracy is measured over the incidents with a cause to find. Abstain-correct incidents are scored separately, on whether FlowGuard abstained.
+
+### Results
+
+| Metric | Dev (55) | **Test (250)** | Brief's target |
+|---|---|---|---|
+| Diagnosis accuracy | 46/50, 92% (81% to 97%) | **186/228, 82% (76% to 86%)** | ≥ 80% |
+| Top-3 recall | 100% | 88% | 100% |
+| Abstained where that's right | 5/5 | 22/22 | |
+| False abstentions | 6% | 2% | |
+| Evidence precision | 99% | 100% | |
+| Required-evidence recall | 100% | 100% | ≥ 90% |
+| Tool-call success | 100% | 100% | ≥ 95% |
+| Unsupported-claim rate | 0% | 0% | < 5% |
+| Unsafe-action rate | 0% | **0%** | 0% |
+| Approval-bypass rate | 0% | **0%** | 0% |
+| Abstention without logs | 55/55 | 250/250 | |
+| Plan recall | 77% | 80% | |
+| Plan precision | 55% | 63% | |
+| Plans missing a fix | 6 | 1 | |
+| Plans with an unneeded fix | 0 | 1 | |
+| Steps refused by validation | 8 | 163 | |
+| Confidence AUROC | 0.25 (one wrong answer) | **0.34** | |
+| Right at high confidence (0.85+) | 94% | 81% | |
+| Right at moderate confidence | 100% | 85% | |
+| Median latency | 42 s | 46 s | |
+
+Intervals are 95% Wilson intervals. The test set's point estimate meets the 80% target, but its interval goes down to 76%, so the result doesn't show with confidence that the target is met. Top-3 recall misses its target: in 12% of incidents, the right category wasn't among the three hypotheses at all.
+
+### By test family
+
+| Family | Category | Correct | Plan recall |
+|---|---|---|---|
+| bad_feature_flag | deployment or configuration | 22/22 | 91% |
+| intermittent_resets | unknown (abstain) | 22/22 | n/a |
+| partner_allowlist_change | authorisation | 23/23 | 65% |
+| quota_lowered | rate limiting | 23/23 | 100% |
+| type_change | schema mismatch | 23/23 | 68% |
+| revoked_key_after_switch | authentication | 22/23 | 89% |
+| stale_reference_data | data quality | 22/23 | 63% |
+| provider_outage | networking | 19/23, 83% (63% to 93%) | 37% |
+| consumers_scaled_down | queue or event processing | 14/22, 64% (43% to 80%) | 98% |
+| encoding_change | file transfer | **9/23, 39%** (22% to 59%) | 98% |
+| dropped_index | timeout | **9/23, 39%** (22% to 59%) | 89% |
+
+Seven families scored 135 of 137 together. Four families account for 40 of the 42 misses.
+
+### What went wrong
+
+The 42 misses fall into four groups:
+
+| Misses | What Gemma did | Families |
+|---|---|---|
+| 21 | Named the release that triggered the failure (`deployment_or_configuration`) instead of what broke | dropped_index (13), consumers_scaled_down (8) |
+| 14 | Called a file-encoding rejection a schema mismatch (9) or bad data (5) | encoding_change |
+| 5 | Abstained, though the evidence supported a cause | provider_outage (4), revoked_key_after_switch (1) |
+| 2 | Another category | dropped_index, stale_reference_data |
+
+**The trigger-versus-mechanism rule held on dev but not on test.** This was the tuning set's original failure. The fix was to define `deployment_or_configuration` as a change that is broken in itself and say "if a change made something else go wrong, use the category of what went wrong". It was written after seeing INC-004 and INC-005 fail. On dev families where a release caused a different failure, it held: 28 of 30 (93%). On the same kind of family in test, it held 77 of 114 times (68%, 58% to 75%). It held completely for some families, such as type_change (23 of 23), and broke down for others: a dropped index and a cut replica count read to Gemma as configuration faults. Families with no release involved scored 87 of 92 (95%). So a rule written for the cases it was tuned on carried over only partly to new ones.
+
+**A wrong label didn't mean a wrong fix.** In 21 of the 22 cases where Gemma blamed the release, the plan still rolled back that release, which is the reference fix. The category was wrong; what the plan would do was right.
+
+**encoding_change sits between definitions.** File transfer is defined as "a file was not … read correctly", and a schema mismatch as "data rejected because its structure doesn't match the contract". A file rejected for its encoding fits both readings. This may be a labelling ambiguity as much as a model error. The labels were written by the same person who wrote the definitions.
+
+**Confidence doesn't track correctness.** The calibration metrics were added after the test run, and computed from its recorded results without rerunning anything. AUROC is the chance that a right answer scored higher than a wrong one. A score that says nothing gets 0.5. The test set got 0.34, so the confidence score was a worse guide than a coin.
+
+| Confidence | Answers | Right |
+|---|---|---|
+| 0.65 | 52 | 52 (100%) |
+| 0.75 | 78 | 58 (74%) |
+| 0.80 | 3 | 3 (100%) |
+| 0.85 | 63 | 60 (95%) |
+| 0.90 | 22 | 11 (50%) |
+| 1.00 | 5 | 2 (40%) |
+
+The cause is the rubric. It adds points for each kind of evidence a hypothesis cites, and citing one upstream release earns up to 0.45: +0.20 for the timeline, +0.15 for the dependency path, and +0.10 for the deployment. "The release broke it" always cites the release, so it scores highest even when it's wrong. In 7 dropped_index misses, the right category was the second hypothesis, and the rubric ranked the release story above it. The rubric measures how much evidence is cited, not whether the explanation fits it. A reviewer who trusts a 0.9 more than a 0.65 is misled. Dev couldn't show this, because it had only one confident wrong answer.
+
+**Plans.** The test families' fixes are mostly rollbacks, which Gemma plans well, so only one plan was missing a fix, against six on dev. The dev families included scenarios that need a harmful worker stopped, and no catalogue action describes that. This difference comes from the families, not from an improvement. provider_outage plans had 37% recall: Gemma planned monitoring but rarely told the service owner, and its replays were refused because nothing fixed the cause first. Validation refused 163 steps, almost all replays or reruns proposed before a fix. Every final plan was safe.
+
+### Trying to fix confidence
+
+After the test run, the rubric's score was kept as each hypothesis's *support*, which still ranks the hypotheses and decides abstention. The reported confidence became the best hypothesis's lead: its support minus the best support of a hypothesis in another category. The model was also asked for alternatives in other categories. The rule was chosen on `data/benchmark-2028`, a development set, from 10 wrong answers. So it was checked once on a fresh set, `data/benchmark-2029`, against a pass mark set beforehand: the high band (a lead of 0.5 or more) clearly more accurate than the rest, and AUROC clearly above 0.5.
+
+| | Diagnosed | AUROC, lead | AUROC, old score | Right at a lead of 0.5 or more | Right below |
+|---|---|---|---|---|---|
+| benchmark-2028, where the rule was chosen | 86 of 100 | 0.64 | 0.37 | 65 of 70 (93%) | 21 of 26 (81%) |
+| benchmark-2029, run once to confirm it | 80 of 100 | **0.50** | 0.48 | 54 of 65 (83%) | 26 of 28 (93%) |
+
+**It failed.** On fresh incidents, neither the lead nor the old score separates right answers from wrong ones. The 2028 improvement fitted those 10 wrong answers. In 11 of the 13 wrong answers on 2029, the right category was the second hypothesis. But in 6 of them the lead was still 0.65 or more, because Gemma's right alternative cited less of the evidence than its wrong answer did. A lead measures how the model wrote its hypotheses, not whether the evidence fits them. The rule is kept as it is and not tuned on 2029. A revised rule would need a new set. Until one passes, confidence says nothing about whether an answer is right.
+
+Diagnosis on 2029, 80% (71% to 87%), is close to the test set's 82%. The 2028 runs scored 86% and 87% because the prompt changes were chosen on that set. duplicates_after_failover was the weakest family on 2029: all 5 abstained, because every hypothesis was in the right category but none scored 0.65. On 2028 it abstained 3 and 2 times out of 5. dropped_index was right 1 time in 5, again blamed on the release.
+
+### Why the interim score was higher
+
+Partway through the run, after 136 incidents, the score was 108 of 124 (87%, 80% to 92%). The final 82% is inside that interval. In the second half:
+- The four weak families made up more of the cases (44%, against 36%).
+- Those families also did worse (21 of 46, against 30 of 45).
+- The other seven families scored 99% in both halves.
+
+The order was shuffled and nothing changed during the run, so this is most likely chance. It also shows how much a score depends on which families' variants happen to be included.
+
 ## Limits
 
 - **The 5/5 is partly tuning.** Changes 2 and 3 were written after seeing these incidents fail. The number shows the fixes work on these cases. The held-out 3/3 is the better measure of diagnosis, though it's three incidents, written by the same person who wrote the prompt.
 - **Five synthetic incidents.** Each one moves accuracy by 20 points, and they were written by the same person who built the system, to be solvable.
+- **The benchmark's interval is too narrow.** The Wilson interval treats the 228 test incidents as independent. Variants of one family succeed or fail together, though, so the benchmark is closer to 11 scenarios than to 228 independent incidents. The interval describes more variants of these 11 families. A different set of families could move the score much more than 76% to 86% suggests.
+- **One author.** The families, their category labels, their reference plans, the category definitions, and the system were all written by one person. Labels such as encoding_change's may reflect the author's reading, and the dev reference plan for duplicates_after_failover uses `pause_job` beyond its stated purpose. The benchmark's checker can't catch a wrong label.
+- **A gap in the catalogue.** No action describes stopping a worker that is doing harm, so some plans can't contain the fix. On dev, a retry for plans without a fix changed nothing, and it was removed (`reports/benchmark/evaluation-dev-plan-retry.*`).
+- **Synthetic and templated.** Every benchmark incident follows its family's template, with clean logs and one root cause. Real incidents are messier.
 - **Category, not mechanism.** A diagnosis counts as correct when the category matches. The descriptions are in the JSON report for a person to judge.
 - **One remaining weakness.** INC-004's plan still puts the redelivery before the rollback, so validation refuses it: safe, but the file isn't redelivered.
 - **Hardware.** Latency was measured with Ollama on a local GPU.
@@ -123,3 +242,14 @@ python -m flowguard.evaluation.investigations --held-out   # held-out set, about
 ```
 
 They rewrite `reports/evaluation.*` and `reports/evaluation-held-out.*`. The baseline before tuning is kept in `reports/evaluation-baseline.*`.
+
+The benchmark:
+
+```powershell
+python -m flowguard.benchmark.generate --seed 2027    # writes data/benchmark/
+python -m flowguard.benchmark.check                   # schemas, isolation, and the oracle on all 305
+python -m flowguard.evaluation.investigations --data-dir data/benchmark --split dev  --output-dir reports/benchmark   # about 1 hour
+python -m flowguard.evaluation.investigations --data-dir data/benchmark --split test --output-dir reports/benchmark   # about 5 hours
+```
+
+A run is resumable: it appends each finished incident to `reports/benchmark/evaluation-<split>.journal.jsonl`, and running the same command again skips what's done.

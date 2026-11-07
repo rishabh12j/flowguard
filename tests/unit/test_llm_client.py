@@ -40,6 +40,7 @@ def test_sends_the_schema_with_thinking_and_streaming_off():
     assert body["format"] == SCHEMA
     assert body["think"] is False
     assert body["stream"] is False
+    assert body["truncate"] is False
     assert body["options"]["temperature"] == 0.0
     assert body["messages"] == [
         {"role": "system", "content": "system"},
@@ -56,6 +57,25 @@ def test_a_missing_model_raises_llm_error():
 
     with pytest.raises(LLMError, match="not found"):
         llm.generate("system", "prompt", SCHEMA)
+
+
+def test_a_prompt_too_long_for_the_context_raises_llm_error_once():
+    # Ollama's answer when truncation is off, seen with 133 evidence items.
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            400,
+            json={
+                "error": "request (12677 tokens) exceeds the available context "
+                "size (8192 tokens), try increasing it"
+            },
+        )
+
+    with pytest.raises(LLMError, match="exceeds the available context"):
+        llm_answering(handler).generate("system", "prompt", SCHEMA)
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

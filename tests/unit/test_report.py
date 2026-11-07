@@ -76,7 +76,7 @@ def test_a_plan_waiting_for_approval_shows_cause_steps_and_safeguards():
 
     assert report.startswith("# INC-001: schema_contract_mismatch")
     assert "Waiting for a person to approve the plan." in report
-    assert "confidence 0.90" in report
+    assert "confidence 0.90)" in report
     assert "+0.30 cites an error log" in report
     assert (
         "1. **update_field_mapping** on `invoice-transformer`: medium risk, needs approval."
@@ -141,3 +141,11 @@ def test_a_rejected_request_has_no_incident_section():
 
     assert report.startswith("# Rejected request")
     assert "## Problems while investigating" in report
+
+
+def test_the_confidence_is_shown_with_the_evidence_score():
+    cause = CAUSE.model_copy(update={"confidence": 0.3, "support": 0.85})
+
+    report = render_report(record(hypotheses=(cause,)))
+
+    assert "(schema_contract_mismatch, confidence 0.30, evidence score 0.85)" in report

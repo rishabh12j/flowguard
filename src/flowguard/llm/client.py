@@ -65,6 +65,9 @@ class OllamaLLM:
                     # Ollama only lets the model produce text that matches this schema.
                     "format": schema,
                     "stream": False,
+                    # A prompt longer than the context would otherwise be cut from
+                    # the front, losing the instructions without an error.
+                    "truncate": False,
                     "think": False,
                     "options": {"temperature": self.temperature, "num_ctx": 8192},
                 },

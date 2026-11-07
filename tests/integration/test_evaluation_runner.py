@@ -9,8 +9,14 @@ from functools import partial
 import pytest
 
 from flowguard.dataset import incident_ids, load_ground_truth
-from flowguard.evaluation.investigations import evaluate, render_markdown, write_report
+from flowguard.evaluation.investigations import (
+    ModelUnavailable,
+    evaluate,
+    render_markdown,
+    write_report,
+)
 from flowguard.evaluation.oracle import Oracle
+from flowguard.llm.client import LLMError
 from flowguard.rag.retrieval import retrieve
 
 pytestmark = pytest.mark.anyio
@@ -90,3 +96,42 @@ async def test_an_interrupted_run_resumes_from_its_journal(client, embedder, tmp
     assert len(journal.read_text(encoding="utf-8").splitlines()) == 2
     assert resumed.incidents == first.incidents
     assert resumed.metrics == first.metrics
+
+
+class Down:
+    """A model that can't be reached, as when Ollama fails to load it."""
+
+    def generate(self, system: str, prompt: str, schema: dict) -> str:
+        raise LLMError("could not reach Ollama")
+
+
+async def test_a_model_outage_stops_the_run_instead_of_being_scored(
+    client, embedder, tmp_path
+):
+    journal = tmp_path / "evaluation.journal.jsonl"
+    search = partial(retrieve, embedder=embedder, client=client)
+    incidents = ["INC-001", "INC-002"]
+
+    def failing_on_the_second(incident_id: str):
+        if incident_id == "INC-002":
+            return Down()
+        return Oracle(load_ground_truth(incident_id))
+
+    with pytest.raises(ModelUnavailable, match="could not reach Ollama"):
+        await evaluate(
+            failing_on_the_second, search, incidents, "oracle", journal=journal
+        )
+    # The outage wasn't journaled as an abstention, so a resume retries it.
+    assert len(journal.read_text(encoding="utf-8").splitlines()) == 1
+
+    resumed = await evaluate(
+        lambda incident_id: Oracle(load_ground_truth(incident_id)),
+        search,
+        incidents,
+        "oracle",
+        journal=journal,
+    )
+    assert [result.status for result in resumed.incidents] == [
+        "awaiting_approval",
+        "awaiting_approval",
+    ]

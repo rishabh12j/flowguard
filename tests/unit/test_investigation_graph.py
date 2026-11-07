@@ -444,6 +444,25 @@ async def test_code_ranks_the_hypotheses_not_the_model():
     assert state["selected_root_cause"].hypothesis_id == "HYP-2"
 
 
+async def test_confidence_is_the_lead_over_another_category():
+    llm = FakeLLM(
+        proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id),
+        proposal("LOG-882", "DEPLOY-SOURCE-221", category="timeout"),
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    best, rival = state["hypotheses"]
+    assert (best.support, best.confidence) == (0.90, 0.15)
+    assert best.confidence_reason.endswith(
+        "; -0.75 the best other category, timeout, scored 0.75"
+    )
+    assert (rival.support, rival.confidence) == (0.75, 0.0)
+    # Contested but well supported: it's the answer, with a low confidence.
+    assert state["selected_root_cause"] == best
+    assert "abstention" not in state
+
+
 async def test_abstains_when_the_best_hypothesis_scores_too_low():
     state = await run(tools=full_tools(), llm=FakeLLM(proposal("LOG-882")))
 
@@ -496,6 +515,23 @@ async def test_abstains_when_the_model_cites_unknown_evidence():
 
     assert "LOG-999" in state["abstention"]
     assert "selected_root_cause" not in state
+
+
+async def test_a_broken_alternative_is_dropped_and_recorded():
+    llm = FakeLLM(
+        proposal("LOG-882", "DEPLOY-SOURCE-221", SPEC.evidence_id),
+        proposal("LOG-882", contradicting=("LOG-882",), category="authorisation"),
+    )
+
+    state = await run(retriever=FakeRetriever(SPEC), tools=full_tools(), llm=llm)
+
+    assert [item.hypothesis_id for item in state["hypotheses"]] == ["HYP-1"]
+    # Recorded, but not a missing source: the confidence isn't lowered.
+    assert state["selected_root_cause"].confidence == 0.90
+    assert (
+        "root_cause: dropped hypothesis 2 broke the schema: Value error, "
+        "evidence both supports and contradicts: ['LOG-882']"
+    ) in state["errors"]
 
 
 async def test_abstains_without_calling_the_model_when_there_is_no_evidence():

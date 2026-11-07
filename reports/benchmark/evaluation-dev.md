@@ -23,6 +23,9 @@ Model: `gemma4:12b`. Finished 2026-11-05 06:19 UTC. 55 incidents, each run once 
 | plan precision | 55% |  |  |
 | missing fixes | 6 |  |  |
 | unneeded fixes | 0 |  |  |
+| confidence auroc | 0.25 |  |  |
+| high confidence accuracy | 94% |  |  |
+| moderate confidence accuracy | 100% |  |  |
 
 | Incident | Expected | Got | Status | Confidence | Precision | Plan | Time |
 |---|---|---|---|---|---|---|---|
@@ -109,6 +112,15 @@ Model: `gemma4:12b`. Finished 2026-11-05 06:19 UTC. 55 incidents, each run once 
 | schema_contract_mismatch | 5 | 5 (100%) | 67% | 0 |
 | timeout | 5 | 4 (80%) | 80% | 1 |
 | unknown | 5 | 5 (100%) | n/a | 0 |
+
+| Confidence | Answers | Right |
+|---|---|---|
+| 0.65 | 4 | 4 (100%) |
+| 0.75 | 22 | 22 (100%) |
+| 0.80 | 3 | 3 (100%) |
+| 0.85 | 12 | 11 (92%) |
+| 0.90 | 5 | 5 (100%) |
+| 1.00 | 1 | 1 (100%) |
 
 Steps refused by validation:
 

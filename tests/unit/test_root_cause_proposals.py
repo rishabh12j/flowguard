@@ -64,7 +64,7 @@ def schema_fields(llm: FakeLLM) -> dict:
 def test_returns_the_proposed_hypotheses():
     llm = FakeLLM(hypothesis("LOG-882", "DEPLOY-SOURCE-221"))
 
-    hypotheses = propose_hypotheses(INCIDENT, EVIDENCE, llm)
+    hypotheses, _ = propose_hypotheses(INCIDENT, EVIDENCE, llm)
 
     assert hypotheses[0].supporting_evidence_ids == ("LOG-882", "DEPLOY-SOURCE-221")
 
@@ -90,6 +90,17 @@ def test_schema_allows_at_most_three_hypotheses():
     propose_hypotheses(INCIDENT, EVIDENCE, llm)
 
     assert llm.calls[0][2]["properties"]["hypotheses"]["maxItems"] == 3
+
+
+def test_schema_asks_for_an_alternative_but_code_accepts_one():
+    llm = FakeLLM(hypothesis("LOG-882"))
+
+    hypotheses, _ = propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    assert llm.calls[0][2]["properties"]["hypotheses"]["minItems"] == 2
+    assert "Give each hypothesis a different category" in llm.calls[0][0]
+    # A model that ignores the schema still gets its answer scored, not rejected.
+    assert len(hypotheses) == 1
 
 
 def test_prompt_includes_the_incident_and_every_evidence_item():
@@ -140,6 +151,38 @@ def test_rejects_an_invented_contradicting_id():
 def test_rejects_an_answer_that_breaks_the_rules(answer):
     with pytest.raises(InvalidProposal, match="broke the schema"):
         propose_hypotheses(INCIDENT, EVIDENCE, FakeLLM(answer=answer))
+
+
+@pytest.mark.parametrize(
+    ("broken", "reason"),
+    [
+        # Seen in the benchmark: an alternative citing the same logs both ways.
+        (
+            hypothesis("LOG-882", contradicting=("LOG-882",)),
+            "hypothesis 2 broke the schema: Value error, evidence both supports",
+        ),
+        (hypothesis("LOG-999"), "hypothesis 2 cites unknown evidence: ['LOG-999']"),
+    ],
+)
+def test_one_broken_hypothesis_is_dropped_not_the_whole_answer(broken, reason):
+    llm = FakeLLM(hypothesis("LOG-882", "DEPLOY-SOURCE-221"), broken)
+
+    hypotheses, dropped = propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    assert [h.supporting_evidence_ids for h in hypotheses] == [
+        ("LOG-882", "DEPLOY-SOURCE-221")
+    ]
+    assert len(dropped) == 1
+    assert dropped[0].startswith(reason)
+
+
+def test_an_answer_with_no_usable_hypothesis_is_rejected():
+    llm = FakeLLM(hypothesis("LOG-999"), hypothesis())
+
+    with pytest.raises(InvalidProposal, match="no usable hypothesis") as error:
+        propose_hypotheses(INCIDENT, EVIDENCE, llm)
+    assert "hypothesis 1 cites unknown evidence" in str(error.value)
+    assert "hypothesis 2 broke the schema" in str(error.value)
 
 
 def test_no_evidence_means_no_model_call():
