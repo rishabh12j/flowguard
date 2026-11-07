@@ -48,6 +48,19 @@ def test_sends_the_schema_with_thinking_and_streaming_off():
     ]
 
 
+def test_a_reasoning_level_is_sent_for_models_that_cannot_turn_it_off():
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return reply("{}")
+
+    client = httpx.Client(base_url=OLLAMA_URL, transport=httpx.MockTransport(handler))
+    OllamaLLM("gpt-oss:20b", client=client, think="low").generate("s", "p", SCHEMA)
+
+    assert (sent[0]["model"], sent[0]["think"]) == ("gpt-oss:20b", "low")
+
+
 def test_a_missing_model_raises_llm_error():
     llm = llm_answering(
         lambda request: httpx.Response(

@@ -740,6 +740,18 @@ def main() -> None:
     )
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=REPORTS_DIR)
+    parser.add_argument(
+        "--model",
+        default=MODEL,
+        help="the Ollama model; give each model its own --output-dir, so a resumed "
+        "run never mixes two models' results",
+    )
+    parser.add_argument(
+        "--think",
+        choices=["off", "low", "medium", "high"],
+        default="off",
+        help="the model's reasoning level; gpt-oss can't turn it off, so use low",
+    )
     arguments = parser.parse_args()
     split: Split = "held_out" if arguments.held_out else arguments.split
 
@@ -747,7 +759,9 @@ def main() -> None:
     embedder = SentenceTransformerEmbedder()
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(evidence), embedder, client)
-    llm = OllamaLLM()
+    llm = OllamaLLM(
+        arguments.model, think=False if arguments.think == "off" else arguments.think
+    )
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         report = asyncio.run(
@@ -755,7 +769,10 @@ def main() -> None:
                 lambda incident_id: llm,
                 partial(retrieve, embedder=embedder, client=client),
                 incidents_in(split, arguments.data_dir),
-                MODEL,
+                arguments.model
+                + (
+                    "" if arguments.think == "off" else f", reasoning {arguments.think}"
+                ),
                 progress=lambda message: print(message, flush=True),
                 data_dir=arguments.data_dir,
                 evidence=evidence,

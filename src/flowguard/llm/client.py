@@ -1,10 +1,14 @@
 import time
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 
 MODEL = "gemma4:12b"
 OLLAMA_URL = "http://localhost:11434"
+
+# Ollama's reasoning setting. False turns it off. gpt-oss ignores False and
+# reasons at its default level, so it needs "low" to be as close to off as it gets.
+Think = bool | Literal["low", "medium", "high"]
 
 
 class LLMError(Exception):
@@ -27,12 +31,14 @@ class OllamaLLM:
         client: httpx.Client | None = None,
         base_url: str = OLLAMA_URL,
         temperature: float = 0.0,
+        think: Think = False,
         timeout_seconds: float = 300.0,
         retries: int = 2,
         retry_delay_seconds: float = 2.0,
     ) -> None:
         self.model = model
         self.temperature = temperature
+        self.think = think
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
         # The first call loads the model into memory, which took nearly three minutes in testing.
@@ -68,7 +74,7 @@ class OllamaLLM:
                     # A prompt longer than the context would otherwise be cut from
                     # the front, losing the instructions without an error.
                     "truncate": False,
-                    "think": False,
+                    "think": self.think,
                     "options": {"temperature": self.temperature, "num_ctx": 8192},
                 },
             )
