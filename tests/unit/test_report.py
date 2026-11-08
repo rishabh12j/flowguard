@@ -149,3 +149,29 @@ def test_the_confidence_is_shown_with_the_evidence_score():
     report = render_report(record(hypotheses=(cause,)))
 
     assert "(schema_contract_mismatch, confidence 0.30, evidence score 0.85)" in report
+
+
+def test_the_rule_the_evidence_score_and_the_check_are_shown():
+    cause = CAUSE.model_copy(
+        update={
+            "confidence": 0.6,
+            "support": 0.55,
+            "verdict": "mechanism",
+            "verdict_reason": "The logs show the renamed fields being rejected.",
+        }
+    )
+
+    report = render_report(
+        record(hypotheses=(cause,), decision_rule="checked", evidence_score=0.9)
+    )
+
+    assert "evidence score 0.55, check: mechanism)" in report
+    assert "**The check:** The logs show the renamed fields being rejected." in report
+    assert (
+        "Chosen by the checked rule; all the cited evidence together scored 0.90."
+        in report
+    )
+
+
+def test_older_records_say_nothing_about_a_rule():
+    assert "Chosen by" not in render_report(record())

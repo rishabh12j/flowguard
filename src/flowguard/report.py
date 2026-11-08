@@ -20,10 +20,13 @@ def scores(hypothesis: RootCauseHypothesis) -> str:
     # Records from before 2026-11-07 have only a confidence, which was the support.
     if hypothesis.support is None:
         return f"confidence {hypothesis.confidence:.2f}"
-    return (
+    text = (
         f"confidence {hypothesis.confidence:.2f}, "
         f"evidence score {hypothesis.support:.2f}"
     )
+    if hypothesis.verdict is not None:
+        text += f", check: {hypothesis.verdict.replace('_', ' ')}"
+    return text
 
 
 def render_report(record: InvestigationRecord) -> str:
@@ -63,6 +66,15 @@ def render_report(record: InvestigationRecord) -> str:
             f"- **Why this confidence:** {selected.confidence_reason}",
             f"- **Evidence:** {', '.join(selected.supporting_evidence_ids)}",
         ]
+        if selected.verdict_reason:
+            lines.append(f"- **The check:** {selected.verdict_reason}")
+    if record.decision_rule and record.hypotheses:
+        together = (
+            ""
+            if record.evidence_score is None
+            else f"; all the cited evidence together scored {record.evidence_score:.2f}"
+        )
+        lines += ["", f"Chosen by the {record.decision_rule} rule{together}."]
     others = [h for h in record.hypotheses if h is not selected]
     if others:
         lines += ["", "Other hypotheses considered:", ""]

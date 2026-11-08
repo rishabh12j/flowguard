@@ -58,6 +58,9 @@ def build_record(
         decision=state.get("decision"),
         evidence_round=state.get("evidence_round", 0),
         reviewer_request=state.get("reviewer_request"),
+        evidence_score=state.get("evidence_score"),
+        missing_sources=state.get("missing_sources", 0),
+        decision_rule=state.get("decision_rule"),
     )
 
 

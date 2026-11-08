@@ -112,3 +112,13 @@ def test_an_api_error_stops_an_evaluation():
         llm.generate("system", "prompt", {"type": "object"})
     with pytest.raises(ModelUnavailable):
         Watched(llm).generate("system", "prompt", {"type": "object"})
+
+
+def test_a_claude_run_without_a_key_stops_before_it_starts(monkeypatch):
+    from flowguard.evaluation.investigations import model_for
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
+        model_for("claude-sonnet-5-5", "off")

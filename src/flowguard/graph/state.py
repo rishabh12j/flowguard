@@ -37,6 +37,11 @@ class InvestigationState(TypedDict, total=False):
 
     # Why no root cause was selected. Abstaining is a result, not an error.
     abstention: str | None
+    # The rubric's score of all the cited evidence together, the evidence sources
+    # that failed, and the decision rule that chose the answer.
+    evidence_score: float
+    missing_sources: int
+    decision_rule: str
     status: InvestigationStatus
     proposed_actions: tuple[ProposedAction, ...]
     actions: tuple[PlannedAction, ...]

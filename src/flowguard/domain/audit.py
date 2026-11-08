@@ -65,3 +65,8 @@ class InvestigationRecord(BaseModel):
     decision: ApprovalDecision | None = None
     evidence_round: int = Field(default=0, ge=0)
     reviewer_request: str | None = None
+    # Since 2026-11-08: the rubric's score of all the evidence the hypotheses cite
+    # together, how many evidence sources failed, and which rule chose the answer.
+    evidence_score: float | None = Field(default=None, ge=0, le=1)
+    missing_sources: int = Field(default=0, ge=0)
+    decision_rule: str | None = None

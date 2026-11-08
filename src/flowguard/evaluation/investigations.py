@@ -6,9 +6,11 @@ python -m flowguard.evaluation.investigations
 import argparse
 import asyncio
 import math
+import os
 import statistics
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -26,16 +28,18 @@ from flowguard.dataset import (
     load_incident,
 )
 from flowguard.domain.audit import InvestigationRecord
+from flowguard.domain.decision import RULES, Rule
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
-from flowguard.graph.context import Dependencies
+from flowguard.graph.context import Dependencies, FitScorer
 from flowguard.llm.client import LLM, MODEL, LLMError, ModelDeclined, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.mcp.permissions import POLICIES, ToolGuard
 from flowguard.mcp.servers.knowledge.server import DocumentSearch
 from flowguard.rag.embedding import SentenceTransformerEmbedder
+from flowguard.rag.fit import CategoryFit
 from flowguard.rag.ingestion import ingest, knowledge_chunks
 from flowguard.rag.retrieval import retrieve
 from flowguard.seed_schemas import GroundTruth
@@ -69,6 +73,12 @@ class HypothesisResult(Model):
     supporting_evidence_ids: list[str]
     # The rubric's score of its evidence. None in runs from before 2026-11-07.
     support: float | None = None
+    # Since 2026-11-08, what each decision rule needs to be re-scored offline.
+    contradicting_evidence_ids: list[str] = []
+    proposed_rank: int | None = None
+    signals: list[str] = []
+    fit: float | None = None
+    verdict: str | None = None
 
 
 class IncidentResult(Model):
@@ -107,6 +117,11 @@ class IncidentResult(Model):
     # Every hypothesis with its score, best first. Empty in runs made before it was
     # recorded.
     hypotheses: list[HypothesisResult] = []
+    # Since 2026-11-08: all the cited evidence scored together, the evidence
+    # sources that failed, and the rule that made the decision.
+    evidence_score: float | None = None
+    missing_sources: int = 0
+    decision_rule: str | None = None
 
 
 class AbstentionResult(Model):
@@ -283,9 +298,17 @@ def score_run(
                 confidence_reason=h.confidence_reason,
                 supporting_evidence_ids=list(h.supporting_evidence_ids),
                 support=h.support,
+                contradicting_evidence_ids=list(h.contradicting_evidence_ids),
+                proposed_rank=h.proposed_rank,
+                signals=list(h.signals),
+                fit=h.fit,
+                verdict=h.verdict,
             )
             for h in record.hypotheses
         ],
+        evidence_score=record.evidence_score,
+        missing_sources=record.missing_sources,
+        decision_rule=record.decision_rule,
     )
 
 
@@ -408,6 +431,18 @@ def summarise(
     )
 
 
+@dataclass(frozen=True)
+class Decider:
+    """How the investigations choose a root cause: the rule, and its inputs."""
+
+    rule: Rule = "rubric"
+    fit: FitScorer | None = None
+    check: bool = False
+
+
+DEFAULT_DECIDER = Decider()
+
+
 class ModelUnavailable(Exception):
     """The model failed to answer, so the run stops instead of scoring the failure.
 
@@ -458,6 +493,7 @@ async def run_incident(
     *,
     data_dir: Path = DATA_DIR,
     evidence: Sequence[EvidenceItem] | None = None,
+    decider: Decider = DEFAULT_DECIDER,
 ) -> tuple[InvestigationRecord, float]:
     store = SqliteAuditStore()
     started = time.perf_counter()
@@ -466,7 +502,14 @@ async def run_incident(
             state = await investigate(
                 build_graph(InMemorySaver(serde=SERIALIZER)),
                 load_incident(incident_id, data_dir),
-                Dependencies(tools=tools, llm=llm, audit=store),
+                Dependencies(
+                    tools=tools,
+                    llm=llm,
+                    audit=store,
+                    rule=decider.rule,
+                    fit=decider.fit,
+                    check=decider.check,
+                ),
             )
     except BaseExceptionGroup as group:
         outage = outage_in(group)
@@ -510,6 +553,7 @@ async def evaluate(
     data_dir: Path = DATA_DIR,
     evidence: Sequence[EvidenceItem] | None = None,
     journal: Path | None = None,
+    decider: Decider = DEFAULT_DECIDER,
 ) -> EvaluationReport:
     # Each finished incident is appended to the journal, so a long run that's
     # interrupted can start again without repeating what it already did.
@@ -529,6 +573,7 @@ async def evaluate(
             search,
             data_dir=data_dir,
             evidence=evidence,
+            decider=decider,
         )
         result = score_run(record, truth, seconds)
         results.append(result)
@@ -540,6 +585,7 @@ async def evaluate(
             without_logs(),
             data_dir=data_dir,
             evidence=evidence,
+            decider=decider,
         )
         abstention = AbstentionResult(
             incident_id=incident_id,
@@ -730,9 +776,30 @@ def incidents_in(split: Split, data_dir: Path = DATA_DIR) -> list[str]:
     ]
 
 
+def described(model: str, think: str, rule: str, check: bool) -> str:
+    """The report's model line: the model, and every setting that changes answers."""
+    parts = [model]
+    if think != "off":
+        parts.append(f"reasoning {think}")
+    if rule != "rubric":
+        parts.append(f"rule {rule}")
+    if check:
+        parts.append("with the check")
+    return ", ".join(parts)
+
+
 def model_for(name: str, think: str) -> LLM:
     """An Ollama model, or Claude for a name starting with claude-."""
     if name.startswith("claude-"):
+        # Without a key the SDK fails on the first call with an unclear TypeError.
+        if not (
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        ):
+            raise SystemExit(
+                f"{name} needs ANTHROPIC_API_KEY set in this shell. Set it for the "
+                "session only; never write it into a file in the repo."
+            )
         # Imported here, so the anthropic package is only needed for Claude.
         from flowguard.llm.claude import ClaudeLLM
 
@@ -773,14 +840,30 @@ def main() -> None:
         help="only the first N incidents, to try a model out; a later full run "
         "with the same --output-dir resumes from them",
     )
+    parser.add_argument(
+        "--rule",
+        choices=RULES,
+        default="rubric",
+        help="the decision rule the investigations use; every rule is also "
+        "re-scored afterwards from the same run",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="also ask the model to judge each hypothesis, a second call per "
+        "investigation, so the checked rule has verdicts to use",
+    )
     arguments = parser.parse_args()
     split: Split = "held_out" if arguments.held_out else arguments.split
+    # First, so a missing key fails before the embedder loads.
+    llm = model_for(arguments.model, arguments.think)
 
     evidence = load_evidence(arguments.data_dir)
     embedder = SentenceTransformerEmbedder()
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(evidence), embedder, client)
-    llm = model_for(arguments.model, arguments.think)
+    # The fit costs one embedding per investigation, so it's always recorded.
+    decider = Decider(arguments.rule, CategoryFit(embedder), arguments.check)
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         report = asyncio.run(
@@ -788,14 +871,14 @@ def main() -> None:
                 lambda incident_id: llm,
                 partial(retrieve, embedder=embedder, client=client),
                 incidents_in(split, arguments.data_dir)[: arguments.limit],
-                arguments.model
-                + (
-                    "" if arguments.think == "off" else f", reasoning {arguments.think}"
+                described(
+                    arguments.model, arguments.think, arguments.rule, arguments.check
                 ),
                 progress=lambda message: print(message, flush=True),
                 data_dir=arguments.data_dir,
                 evidence=evidence,
                 journal=arguments.output_dir / f"{report_name(split)}.journal.jsonl",
+                decider=decider,
             )
         ).model_copy(update={"split": split})
     except ModelUnavailable as error:
@@ -805,6 +888,15 @@ def main() -> None:
         ) from error
     write_report(report, arguments.output_dir)
     print(render_markdown(report))
+    # Imported here: the rules module builds on this one.
+    from flowguard.evaluation.rules import compare, render
+
+    lines = ["# Decision rules", ""] + render(report.model, compare(report.incidents))
+    rules = "\n".join(lines)
+    (arguments.output_dir / f"{report_name(split)}-rules.md").write_text(
+        rules, encoding="utf-8"
+    )
+    print(rules)
     used = getattr(llm, "input_tokens", None), getattr(llm, "output_tokens", None)
     if used[0] is not None:
         # Only this run's calls: incidents resumed from the journal aren't counted.

@@ -210,23 +210,69 @@ Diagnosis on 2029, 80% (71% to 87%), is close to the test set's 82%. The 2028 ru
 
 ### Comparing models
 
-`gpt-oss:20b` ran on the same 110 incidents of `data/benchmark-2028` as Gemma's second run, with the same code. It can't turn reasoning off, so it ran at its lowest level (`--think low`). benchmark-2028 is tuning data, so this compares the two models; it isn't an unbiased score for either.
+Three models ran on the same 110 incidents of `data/benchmark-2028`, with the same code. `gpt-oss:20b` can't turn reasoning off, so it ran at its lowest level (`--think low`). `claude-sonnet-5-5` ran through the Anthropic API with thinking off, like Gemma. benchmark-2028 is tuning data, and the prompts were tuned with Gemma, so this compares the models under FlowGuard as it is; it isn't an unbiased score for any of them.
 
-| | gemma4:12b | gpt-oss:20b, low reasoning |
-|---|---|---|
-| Diagnosed correctly | **86 of 100** (78% to 92%) | **53 of 100** (43% to 62%) |
-| Right where the other was wrong | 35 | 2 |
-| Abstained wrongly | 4% | 13% |
-| Plan includes the reference fix steps | 86% | 74% |
-| Unsafe steps refused by validation | 41 | 69 |
-| Unsafe actions or approval bypasses | 0 | 0 |
-| Median time | 45 s | 38 s |
+| | gemma4:12b | gpt-oss:20b, low reasoning | claude-sonnet-5-5 |
+|---|---|---|---|
+| Diagnosed correctly | **86 of 100** (78% to 92%) | **53 of 100** (43% to 62%) | **76 of 100** (67% to 83%) |
+| Right category among the hypotheses | 97% | 90% | **100%** |
+| Wrong diagnoses | 10 | 34 | **4** |
+| Abstained wrongly | 4 | 13 | 20 |
+| Right when it gave an answer | 86 of 96 (90%) | 53 of 87 (61%) | **76 of 80 (95%)** |
+| Confidence AUROC | 0.37 | 0.56 | **0.91** |
+| Right at a lead of 0.5 or more | 88% | 69% | **55 of 55** |
+| Plan includes the reference fix steps | 86% | 74% | 76% |
+| Unsafe steps refused by validation | 41 | 69 | 28 |
+| Unsafe actions or approval bypasses | 0 | 0 | 0 |
+| Median time | 45 s | 38 s | **12.5 s** |
 
-**gpt-oss blames the release.** 28 of its 32 wrong answers were `deployment_or_configuration`. It writes the release as a hypothesis of its own and puts the error logs on a separate hypothesis in the right category. The rubric gives up to 0.45 for citing a release, so the release hypothesis outscores the right one, or the best score falls below 0.65 and FlowGuard abstains (13 incidents). Gemma usually cites the release and the logs together, on the hypothesis about what broke. Its hypotheses cite 4.4 items on average, against gpt-oss's 3.4.
+Sonnet was right on 10 incidents Gemma missed, and Gemma on 20 that Sonnet missed.
 
-**More reasoning didn't fix it.** Eight of gpt-oss's misses were rerun at medium reasoning: 2 came out right, and the other 6 still blamed the release, at 104 seconds an incident against 38.
+**gpt-oss blames the release.** 28 of its 32 wrong answers were `deployment_or_configuration`. It writes the release as a hypothesis of its own and puts the error logs on a separate hypothesis in the right category. The rubric gives up to 0.45 for citing a release, so the release hypothesis outscores the right one, or the best score falls below 0.65 and FlowGuard abstains. Gemma usually cites the release and the logs together, on the hypothesis about what broke. Eight of gpt-oss's misses were rerun at medium reasoning: 2 came out right, and the other 6 still blamed the release, at 104 seconds an incident against 38.
 
-**What this says about FlowGuard.** gpt-oss is the weaker model here, but part of the gap is the rubric. The rubric scores what kinds of evidence a hypothesis cites, not whether the evidence fits its category, so Gemma's 86% depends partly on how Gemma happens to group its citations. The same flaw broke the confidence score. Validation kept every plan safe with both models.
+**Sonnet is right but scored too low.** In all 20 of its wrong abstentions, its first hypothesis had the right category, and each lost 0.20 for listing contradicting evidence. Sonnet lists contradicting evidence for 90% of its hypotheses, Gemma for 35%, and none of Gemma's correct answers did. Re-scored offline without the deduction, Sonnet would diagnose about 92. But the deduction also carries information: Sonnet lists heavy contradictions (−0.60 to −1.00) against the alternatives it rules out. What goes wrong is that a single contradicting item costs a well-supported answer 0.20, and the abstention bar is applied to that one answer's score rather than to the incident's evidence.
+
+**Confidence works with a model that weighs its alternatives fairly.** The lead rule failed its check with Gemma (AUROC 0.50 on `data/benchmark-2029`). With Sonnet, every answer leading by 0.5 or more was right, and its 4 wrong diagnoses led by 0.10 to 0.35. The rule needs the model to give the right alternative its due, which Sonnet does and Gemma doesn't. This is one run on tuning data, with 4 wrong answers.
+
+**What this says about FlowGuard.** The rubric, not only the model, limits the score. It scores what kinds of evidence a hypothesis cites, not whether the evidence fits its category, and each model loses to a different part of it: gpt-oss for citing the release separately, Sonnet for being candid about contradicting evidence. Gemma's 86% depends partly on its citation habits fitting the rubric that was tuned with it. Validation kept every plan safe with all three models.
+
+### Where the misses happen
+
+The four runs on `data/benchmark-2028`, by where each of the 100 diagnosable incidents was lost:
+
+| Run | Right | Right category never proposed | Proposed, but outscored | Ranked first, then abstained |
+|---|---|---|---|---|
+| gemma4:12b, first run | 87 | 7 | 3 | 3 |
+| gemma4:12b, asked for alternatives | 86 | 3 | 7 | 4 |
+| gpt-oss:20b | 53 | 10 | 31 | 6 |
+| claude-sonnet-5-5 | 76 | 0 | 4 | 20 |
+
+Most misses happen after the model has proposed the right answer: 11 of Gemma's 14, 37 of gpt-oss's 47, and all 24 of Sonnet's. Two parts of the rubric cause them. It decides whether to abstain on the best hypothesis's own score, so a hypothesis that honestly lists contradicting evidence, or one whose release is cited on a separate hypothesis, falls below 0.65 even when the incident's evidence is strong. Scored together, all the cited evidence separates the 10 incidents with no diagnosable cause (0.55 or less, with every model) from the rest (99 of 100 at 0.65 or more for Gemma and Sonnet). And it ranks by the kinds of evidence cited, so the release story, which always cites the release, wins over what broke.
+
+Re-scored offline from these runs, with rules prototyped on this same data:
+
+| Rule | Gemma, first | Gemma, alternatives | gpt-oss | Sonnet |
+|---|---|---|---|---|
+| The rubric | 87 (8 wrong) | 86 (10) | 53 (34) | 76 (4) |
+| Abstain on all the evidence together | 89 (8) | 89 (10) | 57 (39) | 95 (4) |
+| ... and a bonus for the best-fitting category | 88 (9) | 89 (10) | 65 (31) | 97 (2) |
+| ... and the release's points shared | 89 (8) | 88 (11) | 75 (21) | 94 (5) |
+
+Every rule still abstained on all 10 incidents with no diagnosable cause. These numbers were found on the data they're measured on, and the no-cause incidents come from only two families, so they're a direction, not a result. The rules are now in `flowguard.domain.decision`, with two that need new runs: taking the model's own first choice, and a second call that checks each hypothesis. Each is compared on new runs, and the one chosen is confirmed once on a fresh seed.
+
+Gemma and Sonnet then ran `data/benchmark-2028` once more each, with the check on, and every rule was scored on those runs. The check answered on all 220 incidents.
+
+| Rule | Gemma | Sonnet | Both | Confidence AUROC, Gemma / Sonnet |
+|---|---|---|---|---|
+| The rubric | 85 (12 wrong) | 77 (4) | 162 | 0.69 / 0.85 |
+| `evidence` | 90 (9) | 98 (2) | **188** | 0.58 / 0.70 |
+| `evidence_shared` | 91 (8) | 96 (4) | 187 | 0.63 / 0.95 |
+| `model` | 87 (12) | 98 (2) | 185 | 0.67 / 0.70 |
+| `checked` | 90 (9) | 96 (4) | 186 | 0.61 / 0.85 |
+
+Every rule abstained on all 10 incidents with no diagnosable cause, and none made more wrong diagnoses than the rubric, so all four qualified under the selection fixed in the brief beforehand. `evidence` had the most right diagnoses. `checked` would have needed 192 to be chosen. So `evidence` is the rule confirmed on `data/benchmark-2030`. These 2028 numbers come from the data the rules were built on, so they aren't its accuracy.
+
+One cost the pass mark doesn't measure: confidence is still the lead on the rubric's support, and under `evidence` the chosen hypothesis can have less support than another, so confidence separates right from wrong less well (AUROC 0.69 to 0.58 for Gemma, 0.85 to 0.70 for Sonnet). Confidence was already not calibrated for Gemma.
 
 ### Why the interim score was higher
 
@@ -285,3 +331,10 @@ python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --s
 ```
 
 `--limit 3` tries a model on the first three incidents and prints the tokens used; the same command without it resumes from them.
+
+Comparing the decision rules: a run with `--check` records everything all five rules need, and writes `evaluation-<split>-rules.md` scoring each. Finished runs can be compared later:
+
+```powershell
+python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --split dev --output-dir reports/benchmark-2028-rules-gemma --check
+python -m flowguard.evaluation.rules reports/benchmark-2028-rules-gemma reports/benchmark-2028-rules-claude
+```

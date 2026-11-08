@@ -18,6 +18,35 @@ HISTORICAL_MATCH = 0.10
 PER_CONTRADICTION = 0.20
 PER_MISSING_SOURCE = 0.15
 
+# Each signal's name, points, and the reason shown for it. The names are recorded,
+# so a different rubric can be re-scored from a finished run.
+SIGNALS = {
+    "error_log": (DIRECT_ERROR, "cites an error log"),
+    "timeline": (TIMELINE, "a cited change came before the first failure"),
+    "dependency_path": (
+        DEPENDENCY_PATH,
+        "a cited change is at or upstream of the failure",
+    ),
+    "api_spec": (API_OR_SCHEMA, "cites an API specification"),
+    "deployment": (DEPLOYMENT, "cites a deployment"),
+    "historical_match": (HISTORICAL_MATCH, "cites a similar past incident"),
+}
+# The signals that come from citing a change, such as a release.
+CHANGE_SIGNALS = frozenset({"timeline", "dependency_path", "deployment"})
+
+
+def points(signals: frozenset[str]) -> float:
+    return sum(SIGNALS[name][0] for name in signals)
+
+
+def deductions(contradictions: int, missing_sources: int) -> float:
+    return PER_CONTRADICTION * contradictions + PER_MISSING_SOURCE * missing_sources
+
+
+def clamp(total: float) -> float:
+    # Sums like 0.30 - 0.20 come out as 0.0999..., so round before comparing to a threshold.
+    return round(min(max(total, 0.0), 1.0), 2)
+
 
 def score(
     hypothesis: ProposedHypothesis,
@@ -25,9 +54,30 @@ def score(
     first_failure: EvidenceItem | None,
     missing_sources: int,
 ) -> tuple[float, str]:
-    cited = [
-        evidence[evidence_id] for evidence_id in hypothesis.supporting_evidence_ids
+    found = signals(hypothesis.supporting_evidence_ids, evidence, first_failure)
+    reasons = [
+        f"+{weight:.2f} {reason}"
+        for name, (weight, reason) in SIGNALS.items()
+        if name in found
     ]
+    contradictions = len(hypothesis.contradicting_evidence_ids)
+    if contradictions:
+        reasons.append(
+            f"-{PER_CONTRADICTION * contradictions:.2f} contradicting evidence"
+        )
+    if missing_sources:
+        reasons.append(f"-{PER_MISSING_SOURCE * missing_sources:.2f} missing evidence")
+    support = clamp(points(found) - deductions(contradictions, missing_sources))
+    return support, "; ".join(reasons) or "no supporting signals"
+
+
+def signals(
+    cited_ids: Sequence[str],
+    evidence: Mapping[str, EvidenceItem],
+    first_failure: EvidenceItem | None,
+) -> frozenset[str]:
+    """Which of the rubric's signals the cited evidence shows."""
+    cited = [evidence[evidence_id] for evidence_id in cited_ids]
     # A metric that never crossed its threshold has no timestamp: nothing changed.
     changes = [
         item
@@ -46,54 +96,20 @@ def score(
             )
         path = any(item.source_name in upstream for item in changes)
 
-    signals = [
-        (
-            DIRECT_ERROR,
-            "cites an error log",
-            any(
-                item.source_type == "log" and item.metadata.get("level") == "ERROR"
-                for item in cited
-            ),
+    present = {
+        "error_log": any(
+            item.source_type == "log" and item.metadata.get("level") == "ERROR"
+            for item in cited
         ),
-        (TIMELINE, "a cited change came before the first failure", timeline),
-        (DEPENDENCY_PATH, "a cited change is at or upstream of the failure", path),
-        (
-            API_OR_SCHEMA,
-            "cites an API specification",
-            any(item.source_type == "api_spec" for item in cited),
+        "timeline": timeline,
+        "dependency_path": path,
+        "api_spec": any(item.source_type == "api_spec" for item in cited),
+        "deployment": any(item.source_type == "deployment" for item in cited),
+        "historical_match": any(
+            item.source_type == "historical_incident" for item in cited
         ),
-        (
-            DEPLOYMENT,
-            "cites a deployment",
-            any(item.source_type == "deployment" for item in cited),
-        ),
-        (
-            HISTORICAL_MATCH,
-            "cites a similar past incident",
-            any(item.source_type == "historical_incident" for item in cited),
-        ),
-    ]
-
-    total = 0.0
-    reasons = []
-    for points, reason, present in signals:
-        if present:
-            total += points
-            reasons.append(f"+{points:.2f} {reason}")
-
-    contradictions = len(hypothesis.contradicting_evidence_ids)
-    if contradictions:
-        total -= PER_CONTRADICTION * contradictions
-        reasons.append(
-            f"-{PER_CONTRADICTION * contradictions:.2f} contradicting evidence"
-        )
-    if missing_sources:
-        total -= PER_MISSING_SOURCE * missing_sources
-        reasons.append(f"-{PER_MISSING_SOURCE * missing_sources:.2f} missing evidence")
-
-    # Sums like 0.30 - 0.20 come out as 0.0999..., so round before comparing to a threshold.
-    confidence = round(min(max(total, 0.0), 1.0), 2)
-    return confidence, "; ".join(reasons) or "no supporting signals"
+    }
+    return frozenset(name for name, found in present.items() if found)
 
 
 def lead(

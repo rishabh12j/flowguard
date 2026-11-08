@@ -1,8 +1,10 @@
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import NamedTuple, Protocol
 
 from flowguard.domain.audit import InvestigationRecord, ToolCallRecord
+from flowguard.domain.decision import Rule
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.llm.client import LLM
 
@@ -44,9 +46,22 @@ class AuditStore(Protocol):
     def save(self, record: InvestigationRecord) -> None: ...
 
 
+class FitScorer(Protocol):
+    """Each category's similarity to the given error logs."""
+
+    def __call__(self, error_logs: Sequence[str]) -> Mapping[str, float]: ...
+
+
 @dataclass(frozen=True)
 class Dependencies:
     # Every piece of evidence comes through these tools, and so through MCP.
     tools: EvidenceTools
     llm: LLM
     audit: AuditStore
+    # Which rule chooses the root cause. The rubric stays the default until
+    # another rule passes its check on fresh incidents.
+    rule: Rule = "rubric"
+    # Scores how well the error logs fit each category; without it, no fit is recorded.
+    fit: FitScorer | None = None
+    # A second model call that judges each hypothesis. Off by default: it adds a call.
+    check: bool = False

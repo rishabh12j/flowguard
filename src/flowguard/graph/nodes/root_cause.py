@@ -1,17 +1,19 @@
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from flowguard.domain.confidence import lead, score
+from flowguard.domain.confidence import clamp, deductions, lead, points, score, signals
+from flowguard.domain.decision import MIN_SUPPORT, decide
 from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.hypotheses import (
     CATEGORY_DEFINITIONS,
     HypothesisProposal,
     ProposedHypothesis,
     RootCauseHypothesis,
+    Verdict,
 )
 from flowguard.domain.incidents import Incident
 from flowguard.graph.context import Dependencies
@@ -19,8 +21,8 @@ from flowguard.graph.state import InvestigationState
 from flowguard.llm.client import LLM, LLMError
 
 # The brief's line between moderate and insufficient confidence. Since
-# 2026-11-07 it applies to the best hypothesis's support, its evidence score.
-MIN_CONFIDENCE = 0.65
+# 2026-11-07 it applies to an evidence score; which one depends on the rule.
+MIN_CONFIDENCE = MIN_SUPPORT
 # How many hypotheses the model must propose, so each answer has an alternative.
 MIN_HYPOTHESES = 2
 # The nodes that gather evidence. Only their errors are missing sources.
@@ -187,19 +189,59 @@ def root_cause(
         }
 
     by_id = {item.evidence_id: item for item in evidence}
+    first_failure = state.get("first_failure")
     # Each problem recorded while gathering evidence is a source that failed or
     # was cut short. Problems from later steps, such as planning, don't count.
     missing_sources = sum(
         1 for error in state.get("errors", ()) if error.startswith(EVIDENCE_NODES)
     )
+    # A dropped hypothesis is kept in the record, so a reviewer can see it.
+    problems = [f"root_cause: dropped {reason}" for reason in dropped]
+
+    # Everything the hypotheses cite, scored together: whether the incident has
+    # enough evidence for any cause, whatever each hypothesis chose to cite.
+    pooled = sorted({i for p in proposals for i in p.supporting_evidence_ids})
+    evidence_score = clamp(
+        points(signals(pooled, by_id, first_failure)) - deductions(0, missing_sources)
+    )
+
+    context = runtime.context
+    fits: Mapping[str, float] = {}
+    if context.fit is not None:
+        error_logs = [
+            f"{by_id[i].title} {by_id[i].content}"
+            for i in pooled
+            if by_id[i].source_type == "log"
+            and by_id[i].metadata.get("level") == "ERROR"
+        ]
+        fits = context.fit(error_logs)
+
+    verdicts: tuple[tuple[Verdict, str], ...] | None = None
+    if context.check:
+        # Imported here: the check reuses this module's prompt, so a top-level
+        # import would be circular.
+        from flowguard.graph.nodes.hypothesis_check import (
+            InvalidCheck,
+            check_hypotheses,
+        )
+
+        try:
+            verdicts = check_hypotheses(
+                state["incident"], evidence, proposals, context.llm
+            )
+        except (LLMError, InvalidCheck) as error:
+            # Without verdicts the checked rule falls back to the evidence rule.
+            problems.append(f"root_cause: the check failed: {error}")
+
     scored = [
-        (proposal, *score(proposal, by_id, state.get("first_failure"), missing_sources))
+        (proposal, *score(proposal, by_id, first_failure, missing_sources))
         for proposal in proposals
     ]
     supports = [(proposal.category, support) for proposal, support, _ in scored]
     hypotheses = []
     for number, (proposal, support, reason) in enumerate(scored, start=1):
         confidence, against = lead(proposal.category, support, supports)
+        verdict, verdict_reason = verdicts[number - 1] if verdicts else (None, None)
         hypotheses.append(
             RootCauseHypothesis(
                 **proposal.model_dump(),
@@ -207,31 +249,33 @@ def root_cause(
                 confidence=confidence,
                 confidence_reason=f"{reason}; {against}" if against else reason,
                 support=support,
+                proposed_rank=number,
+                signals=tuple(
+                    sorted(
+                        signals(proposal.supporting_evidence_ids, by_id, first_failure)
+                    )
+                ),
+                fit=fits.get(proposal.category),
+                verdict=verdict,
+                verdict_reason=verdict_reason,
             )
         )
 
-    # Code ranks the hypotheses by their evidence, so the model's ordering doesn't
-    # decide the answer. The confidence then says how contested the answer is.
-    ranked = tuple(
-        sorted(hypotheses, key=lambda item: item.support or 0.0, reverse=True)
-    )
-    best = ranked[0]
-    support = best.support or 0.0
-    # A dropped hypothesis is kept in the record, so a reviewer can see it.
-    problems = tuple(f"root_cause: dropped {reason}" for reason in dropped)
-    if support < MIN_CONFIDENCE:
-        return {
-            "hypotheses": ranked,
-            "abstention": (
-                f"the best hypothesis scored {support:.2f}, below {MIN_CONFIDENCE:.2f}"
-            ),
-            # An unconfirmed hypothesis's category is unconfirmed too.
-            "category": "unknown",
-            "errors": problems,
-        }
-    return {
-        "hypotheses": ranked,
-        "selected_root_cause": best,
-        "category": best.category,
-        "errors": problems,
+    # Code decides, with the rule the deployment chose. The confidence then says
+    # how contested the answer is.
+    decision = decide(context.rule, hypotheses, evidence_score, missing_sources)
+    update: InvestigationState = {
+        "hypotheses": decision.ranked,
+        "evidence_score": evidence_score,
+        "missing_sources": missing_sources,
+        "decision_rule": context.rule,
+        "errors": tuple(problems),
     }
+    if decision.selected is None:
+        update["abstention"] = decision.abstention
+        # An unconfirmed hypothesis's category is unconfirmed too.
+        update["category"] = "unknown"
+    else:
+        update["selected_root_cause"] = decision.selected
+        update["category"] = decision.selected.category
+    return update

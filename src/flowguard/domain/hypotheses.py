@@ -59,6 +59,16 @@ class HypothesisProposal(BaseModel):
     hypotheses: tuple[ProposedHypothesis, ...] = Field(min_length=1, max_length=3)
 
 
+# What the check says the evidence shows about a hypothesis: that its category is
+# what failed, only that a change came before the failure, or neither.
+Verdict = Literal["mechanism", "trigger_only", "not_supported"]
+VERDICT_MEANING: dict[Verdict, str] = {
+    "mechanism": "the evidence shows this category is what failed",
+    "trigger_only": "the evidence shows a change came before the failure, but not that this is what failed",
+    "not_supported": "the evidence doesn't show this",
+}
+
+
 class RootCauseHypothesis(ProposedHypothesis):
     """A proposed hypothesis after code has scored its confidence."""
 
@@ -70,3 +80,15 @@ class RootCauseHypothesis(ProposedHypothesis):
     # whether to abstain. None in records from before 2026-11-07, when the
     # confidence was this score.
     support: float | None = Field(default=None, ge=0, le=1)
+
+    # Recorded since 2026-11-08, so each decision rule can be re-scored from one
+    # run. All default to empty, so older records still load.
+    # Where the model put it, 1 for its first choice. The list above is code's order.
+    proposed_rank: int | None = Field(default=None, ge=1)
+    # The rubric's signals its cited evidence shows, such as "error_log".
+    signals: tuple[str, ...] = ()
+    # How closely the incident's error logs match this category's definition.
+    fit: float | None = Field(default=None, ge=-1, le=1)
+    # A second model call's judgement of the hypothesis, when the check is on.
+    verdict: Verdict | None = None
+    verdict_reason: str | None = None

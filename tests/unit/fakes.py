@@ -29,6 +29,7 @@ class FakeLLM:
         later_actions: list[dict] | None = None,
         answer: str | None = None,
         error: Exception | None = None,
+        verdicts: list[dict] | str | None = None,
     ) -> None:
         self.answer = answer or json.dumps({"hypotheses": list(hypotheses)})
         self.actions = actions
@@ -36,12 +37,18 @@ class FakeLLM:
         self.later_actions = later_actions
         self.plans_given = 0
         self.error = error
+        # The check's answer: a list of verdicts, or raw text to test a broken one.
+        self.verdicts = verdicts
         self.calls: list[tuple[str, str, dict]] = []
 
     def generate(self, system: str, prompt: str, schema: dict) -> str:
         self.calls.append((system, prompt, schema))
         if self.error is not None:
             raise self.error
+        if self.verdicts is not None and "verdicts" in schema.get("properties", {}):
+            if isinstance(self.verdicts, str):
+                return self.verdicts
+            return json.dumps({"verdicts": self.verdicts})
         # The remediation schema asks for actions, so those questions get actions.
         if self.actions is not None and "actions" in schema.get("properties", {}):
             self.plans_given += 1
