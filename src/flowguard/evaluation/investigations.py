@@ -31,7 +31,7 @@ from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.graph.builder import build_graph, investigate
 from flowguard.graph.checkpoints import SERIALIZER
 from flowguard.graph.context import Dependencies
-from flowguard.llm.client import LLM, MODEL, LLMError, OllamaLLM
+from flowguard.llm.client import LLM, MODEL, LLMError, ModelDeclined, OllamaLLM
 from flowguard.mcp.evidence_tools import open_evidence_tools
 from flowguard.mcp.permissions import POLICIES, ToolGuard
 from flowguard.mcp.servers.knowledge.server import DocumentSearch
@@ -423,6 +423,7 @@ class Watched:
     right. In an evaluation, it would be scored as the model's choice, and the
     journal would keep it, so a resume would never retry it. An answer that
     breaks the schema still counts: that is the model's behaviour, not an outage.
+    So does a refusal.
     """
 
     def __init__(self, llm: LLM) -> None:
@@ -431,6 +432,8 @@ class Watched:
     def generate(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
         try:
             return self.llm.generate(system, prompt, schema)
+        except ModelDeclined:
+            raise
         except LLMError as error:
             raise ModelUnavailable(str(error)) from error
 
@@ -727,6 +730,16 @@ def incidents_in(split: Split, data_dir: Path = DATA_DIR) -> list[str]:
     ]
 
 
+def model_for(name: str, think: str) -> LLM:
+    """An Ollama model, or Claude for a name starting with claude-."""
+    if name.startswith("claude-"):
+        # Imported here, so the anthropic package is only needed for Claude.
+        from flowguard.llm.claude import ClaudeLLM
+
+        return ClaudeLLM(name, effort=None if think == "off" else think)  # type: ignore[arg-type]
+    return OllamaLLM(name, think=False if think == "off" else think)  # type: ignore[arg-type]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate FlowGuard on its incidents.")
     parser.add_argument(
@@ -743,14 +756,22 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=MODEL,
-        help="the Ollama model; give each model its own --output-dir, so a resumed "
-        "run never mixes two models' results",
+        help="an Ollama model, or a Claude model such as claude-sonnet-5-5 (needs "
+        "the claude extra and ANTHROPIC_API_KEY); give each model its own "
+        "--output-dir, so a resumed run never mixes two models' results",
     )
     parser.add_argument(
         "--think",
         choices=["off", "low", "medium", "high"],
         default="off",
-        help="the model's reasoning level; gpt-oss can't turn it off, so use low",
+        help="the model's reasoning level; gpt-oss can't turn it off, so use low. "
+        "For Claude, a level is its effort with thinking on",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="only the first N incidents, to try a model out; a later full run "
+        "with the same --output-dir resumes from them",
     )
     arguments = parser.parse_args()
     split: Split = "held_out" if arguments.held_out else arguments.split
@@ -759,16 +780,14 @@ def main() -> None:
     embedder = SentenceTransformerEmbedder()
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(evidence), embedder, client)
-    llm = OllamaLLM(
-        arguments.model, think=False if arguments.think == "off" else arguments.think
-    )
+    llm = model_for(arguments.model, arguments.think)
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         report = asyncio.run(
             evaluate(
                 lambda incident_id: llm,
                 partial(retrieve, embedder=embedder, client=client),
-                incidents_in(split, arguments.data_dir),
+                incidents_in(split, arguments.data_dir)[: arguments.limit],
                 arguments.model
                 + (
                     "" if arguments.think == "off" else f", reasoning {arguments.think}"
@@ -782,10 +801,14 @@ def main() -> None:
     except ModelUnavailable as error:
         raise SystemExit(
             f"Stopped: the model failed on {error}. Finished incidents are kept; "
-            "check Ollama, then run the same command again to resume."
+            "check the model, then run the same command again to resume."
         ) from error
     write_report(report, arguments.output_dir)
     print(render_markdown(report))
+    used = getattr(llm, "input_tokens", None), getattr(llm, "output_tokens", None)
+    if used[0] is not None:
+        # Only this run's calls: incidents resumed from the journal aren't counted.
+        print(f"Tokens: {used[0]} in, {used[1]} out.")
 
 
 if __name__ == "__main__":

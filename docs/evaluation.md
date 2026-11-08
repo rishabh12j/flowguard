@@ -208,6 +208,26 @@ After the test run, the rubric's score was kept as each hypothesis's *support*, 
 
 Diagnosis on 2029, 80% (71% to 87%), is close to the test set's 82%. The 2028 runs scored 86% and 87% because the prompt changes were chosen on that set. duplicates_after_failover was the weakest family on 2029: all 5 abstained, because every hypothesis was in the right category but none scored 0.65. On 2028 it abstained 3 and 2 times out of 5. dropped_index was right 1 time in 5, again blamed on the release.
 
+### Comparing models
+
+`gpt-oss:20b` ran on the same 110 incidents of `data/benchmark-2028` as Gemma's second run, with the same code. It can't turn reasoning off, so it ran at its lowest level (`--think low`). benchmark-2028 is tuning data, so this compares the two models; it isn't an unbiased score for either.
+
+| | gemma4:12b | gpt-oss:20b, low reasoning |
+|---|---|---|
+| Diagnosed correctly | **86 of 100** (78% to 92%) | **53 of 100** (43% to 62%) |
+| Right where the other was wrong | 35 | 2 |
+| Abstained wrongly | 4% | 13% |
+| Plan includes the reference fix steps | 86% | 74% |
+| Unsafe steps refused by validation | 41 | 69 |
+| Unsafe actions or approval bypasses | 0 | 0 |
+| Median time | 45 s | 38 s |
+
+**gpt-oss blames the release.** 28 of its 32 wrong answers were `deployment_or_configuration`. It writes the release as a hypothesis of its own and puts the error logs on a separate hypothesis in the right category. The rubric gives up to 0.45 for citing a release, so the release hypothesis outscores the right one, or the best score falls below 0.65 and FlowGuard abstains (13 incidents). Gemma usually cites the release and the logs together, on the hypothesis about what broke. Its hypotheses cite 4.4 items on average, against gpt-oss's 3.4.
+
+**More reasoning didn't fix it.** Eight of gpt-oss's misses were rerun at medium reasoning: 2 came out right, and the other 6 still blamed the release, at 104 seconds an incident against 38.
+
+**What this says about FlowGuard.** gpt-oss is the weaker model here, but part of the gap is the rubric. The rubric scores what kinds of evidence a hypothesis cites, not whether the evidence fits its category, so Gemma's 86% depends partly on how Gemma happens to group its citations. The same flaw broke the confidence score. Validation kept every plan safe with both models.
+
 ### Why the interim score was higher
 
 Partway through the run, after 136 incidents, the score was 108 of 124 (87%, 80% to 92%). The final 82% is inside that interval. In the second half:
@@ -253,3 +273,15 @@ python -m flowguard.evaluation.investigations --data-dir data/benchmark --split 
 ```
 
 A run is resumable: it appends each finished incident to `reports/benchmark/evaluation-<split>.journal.jsonl`, and running the same command again skips what's done.
+
+Another model, on the same incidents (each model needs its own `--output-dir`):
+
+```powershell
+ollama pull gpt-oss:20b
+python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --split dev --output-dir reports/benchmark-2028-gpt-oss --model gpt-oss:20b --think low
+
+pip install -e ".[claude]"    # the Anthropic SDK; set ANTHROPIC_API_KEY in the shell, never in a file
+python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --split dev --output-dir reports/benchmark-2028-claude --model claude-sonnet-5-5 --limit 3
+```
+
+`--limit 3` tries a model on the first three incidents and prints the tokens used; the same command without it resumes from them.

@@ -15,6 +15,14 @@ class LLMError(Exception):
     """The model could not produce a response."""
 
 
+class ModelDeclined(LLMError):
+    """The model chose not to answer, such as a safety refusal.
+
+    It's the model's answer, not an outage: FlowGuard abstains, and an
+    evaluation scores it instead of stopping.
+    """
+
+
 class TransientLLMError(LLMError):
     """A failure that may not happen again, such as a crashed model runner."""
 
