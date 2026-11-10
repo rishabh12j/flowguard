@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from flowguard.domain.audit import InvestigationRecord, ToolCallRecord
 from flowguard.domain.decision import Rule
@@ -65,3 +65,7 @@ class Dependencies:
     fit: FitScorer | None = None
     # A second model call that judges each hypothesis. Off by default: it adds a call.
     check: bool = False
+    # How the root cause is found: hypotheses scored by the rule above, or, being
+    # developed on data/benchmark-2031/dev, reading the symptoms and asking which
+    # change explains them (graph/nodes/explain.py).
+    diagnosis: Literal["hypotheses", "explain"] = "hypotheses"

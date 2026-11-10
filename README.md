@@ -18,7 +18,7 @@ FlowGuard with `gemma4:12b`, on a generated benchmark: 250 test incidents from 1
 
 | | Test set (250) |
 |---|---|
-| Diagnosed correctly | **186 of 228, 82%** (95% interval 76% to 86%) |
+| Diagnosed correctly | **186 of 228, 82%** (95% interval 76% to 86%; 62% to 92% counting each family as one scenario) |
 | Abstained where the evidence supports no cause | 22 of 22 |
 | Abstained wrongly | 2% |
 | Required evidence gathered | 100% |
@@ -29,7 +29,7 @@ FlowGuard with `gemma4:12b`, on a generated benchmark: 250 test incidents from 1
 | Confidence separates right answers from wrong | **No**: AUROC 0.34, where 0.5 is chance. A fix chosen afterwards scored 0.50 on fresh incidents |
 | Median time per investigation | 46 s |
 
-Seven of the eleven families were diagnosed 99% of the time. The misses came from four. In two, Gemma named the release that triggered the failure, not what broke: a dropped index or a cut replica count. Even then, its plan rolled back the right release in 21 of 22 cases. In encoding_change, Gemma mixed up a file's encoding with its schema. In provider_outage, Gemma sometimes abstained when the evidence did support the cause. On the 55 development incidents it scored 92%, so the test set found a real drop. The confidence score is also misleading: answers at 0.9 or above were right 13 of 27 times, and answers at 0.65 were right 52 of 52 times, because the rubric rewards citing a release. Reporting confidence as the lead over the best rival in another category looked better on a development set, then failed its one check on 110 fresh incidents (AUROC 0.50), so confidence still says nothing about whether an answer is right. The incidents are synthetic, and one person wrote both them and FlowGuard. Variants of one family behave alike, so the interval is narrower than it should be. [`docs/evaluation.md`](docs/evaluation.md#benchmark) has the details and the limits.
+Seven of the eleven families were diagnosed 99% of the time. The misses came from four. In two, Gemma named the release that triggered the failure, not what broke: a dropped index or a cut replica count. Even then, its plan rolled back the right release in 21 of 22 cases. In encoding_change, Gemma mixed up a file's encoding with its schema. In provider_outage, Gemma sometimes abstained when the evidence did support the cause. On the 55 development incidents it scored 92%, so the test set found a real drop. The confidence score is also misleading: answers at 0.9 or above were right 13 of 27 times, and answers at 0.65 were right 52 of 52 times, because the rubric rewards citing a release. Reporting confidence as the lead over the best rival in another category looked better on a development set, then failed its one check on 110 fresh incidents (AUROC 0.50), so confidence still says nothing about whether an answer is right. The incidents are synthetic, and one person wrote both them and FlowGuard. Variants of one family behave alike, so the honest interval counts families, not incidents. Two later sets of 110 fresh incidents from the same families scored 80% and 89%. A decision rule that scores all the cited evidence together failed its one pre-registered check on the second (Gemma gained only 2 diagnoses, Sonnet made 2 more wrong ones), so the rubric stays. The benchmark also makes some things easy: every incident has an exact precedent in the knowledge base, and only incidents with a cause have a change before the failure, so a new benchmark of 40 families is being built for the next number. [`docs/evaluation.md`](docs/evaluation.md#benchmark) has the details and the limits.
 
 Before the benchmark, FlowGuard was tuned on five hand-written incidents, and three more were held out and evaluated once:
 
@@ -152,6 +152,7 @@ src/flowguard/
   benchmark/    The benchmark's scenario families, generator, and checker
 data/           Eight seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
 data/benchmark/ The generated benchmark: 305 incidents
+data/benchmark-2031/  The next benchmark: 50 development and 300 test incidents, no model run yet
 reports/        Evaluation results; the benchmark's are in reports/benchmark/
 ```
 

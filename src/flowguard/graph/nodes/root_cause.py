@@ -24,6 +24,7 @@ from flowguard.llm.client import LLM, LLMError
 # 2026-11-07 it applies to an evidence score; which one depends on the rule.
 MIN_CONFIDENCE = MIN_SUPPORT
 # How many hypotheses the model must propose, so each answer has an alternative.
+# Requiring three was tried on 2026-11-09 and made diagnoses worse (brief, section 14).
 MIN_HYPOTHESES = 2
 # The nodes that gather evidence. Only their errors are missing sources.
 EVIDENCE_NODES = ("log_analysis", "dependency_trace", "runbook_retrieval", "follow_up")
@@ -62,7 +63,9 @@ class InvalidProposal(Exception):
 def proposal_schema(evidence_ids: list[str]) -> dict[str, Any]:
     schema = HypothesisProposal.model_json_schema()
     # Code still accepts one hypothesis, but the model must offer an alternative,
-    # so the best answer's score can be weighed against a rival's.
+    # so the best answer's score can be weighed against a rival's. A schema can't
+    # require a different category; the prompt asks for one, and a repeat is kept,
+    # since dropping it would also drop its evidence from the pooled score.
     schema["properties"]["hypotheses"]["minItems"] = MIN_HYPOTHESES
     fields = schema["$defs"]["ProposedHypothesis"]["properties"]
     # Restricting citations to known IDs means the model cannot write an invented one.
@@ -171,6 +174,12 @@ def parse_proposal(
 def root_cause(
     state: InvestigationState, runtime: Runtime[Dependencies]
 ) -> InvestigationState:
+    if runtime.context.diagnosis == "explain":
+        # Imported here: the explain path reuses this module's helpers.
+        from flowguard.graph.nodes.explain import explained_root_cause
+
+        return explained_root_cause(state, runtime)
+
     evidence = state.get("evidence", ())
     if not evidence:
         return {"abstention": "no evidence was gathered", "category": "unknown"}

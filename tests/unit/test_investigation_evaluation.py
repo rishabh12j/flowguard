@@ -7,14 +7,19 @@ from flowguard.domain.hypotheses import RootCauseHypothesis
 from flowguard.domain.incidents import Incident
 from flowguard.domain.remediation import CATALOGUE, PlannedAction
 from flowguard.evaluation.investigations import (
+    PACKAGE,
     AbstentionResult,
     IncidentResult,
     auroc,
     calibration,
+    check_frozen,
+    code_version,
+    family_interval,
     percentile,
     score_run,
     summarise,
     unsafe_steps,
+    wilson,
 )
 from flowguard.seed_schemas import GroundTruth
 
@@ -300,6 +305,87 @@ def test_plan_precision_counts_steps_outside_the_reference():
     assert (result.fix_expected, result.fix_planned) == (True, True)
 
 
+def test_change_precision_leaves_out_follow_ups():
+    # The rollback is a change the reference doesn't make; telling the owner isn't.
+    result = score_run(
+        record(
+            actions=(
+                step("update_field_mapping", "invoice-transformer"),
+                step("rollback_deployment", "DEPLOY-SOURCE-221"),
+                step("notify_service_owner", "supplier-api"),
+            )
+        ),
+        TRUTH,
+        seconds=1,
+    )
+
+    assert result.plan_precision == round(1 / 3, 3)
+    assert result.change_precision == 0.5
+
+
+def test_a_plan_that_changes_nothing_has_no_change_precision():
+    follow_up = score_run(
+        record(actions=(step("notify_service_owner", "supplier-api"),)),
+        TRUTH,
+        seconds=1,
+    )
+    exact = score_run(record(), TRUTH, seconds=1)
+
+    metrics = summarise([follow_up, exact], [])
+
+    assert follow_up.change_precision is None
+    assert metrics.change_precision == 1.0
+
+
+def judged(family: str | None, correct: bool) -> IncidentResult:
+    return score_run(record(), TRUTH, seconds=1).model_copy(
+        update={"family": family, "correct": correct}
+    )
+
+
+def families(*scores: tuple[int, int]) -> list[IncidentResult]:
+    """Results for families given as (right, variants)."""
+    return [
+        judged(f"family-{number}", index < right)
+        for number, (right, variants) in enumerate(scores)
+        for index in range(variants)
+    ]
+
+
+def test_variants_that_always_agree_count_as_one_case_per_family():
+    results = families((5, 5), (5, 5), (0, 5), (0, 5))
+
+    assert family_interval(results) == wilson(2, 4)
+
+
+def test_families_that_score_alike_count_every_incident():
+    results = families((4, 5), (4, 5), (4, 5), (4, 5))
+
+    assert family_interval(results) == wilson(16, 20)
+
+
+def test_the_family_interval_is_wider_when_families_differ():
+    # The spread of the development run's families: most perfect, a few weak.
+    results = families(*[(5, 5)] * 14, (4, 5), (4, 5), (4, 5), (3, 5), (3, 5), (2, 5))
+
+    by_family = family_interval(results)
+    by_incident = wilson(90, 100)
+
+    assert by_family is not None
+    assert by_family[0] < by_incident[0]
+    assert by_family[1] >= by_incident[1]
+    assert by_family[0] > wilson(18, 20)[0]
+
+
+def test_every_family_right_uses_the_number_of_families():
+    assert family_interval(families((3, 3), (3, 3))) == wilson(2, 2)
+
+
+def test_no_family_interval_without_families():
+    assert family_interval([judged(None, True), judged(None, False)]) is None
+    assert family_interval(families((2, 3))) is None
+
+
 # The cause lies with a provider, so the reference plan only tells its owner.
 NO_FIX_TRUTH = GroundTruth.model_validate(
     {
@@ -418,3 +504,44 @@ def test_an_abstention_has_no_confidence_to_calibrate():
     assert metrics.confidence_auroc is None
     assert metrics.high_confidence_accuracy is None
     assert calibration([abstained]) == []
+
+
+def test_the_result_keeps_why_it_abstained_and_the_notes():
+    result = score_run(
+        record(
+            status="abstained",
+            selected_hypothesis_id=None,
+            category="unknown",
+            actions=(),
+            abstention="nothing in the evidence explains the failure",
+            errors=("root_cause: explained by: unexplained",),
+        ),
+        TRUTH,
+        seconds=1,
+    )
+
+    assert result.abstention == "nothing in the evidence explains the failure"
+    assert result.errors == ["root_cause: explained by: unexplained"]
+
+
+def test_a_split_run_once_needs_committed_code_and_data():
+    commit = "0123456789abcdef"
+    for split in ("test", "held_out"):
+        for uncommitted in (True, None):
+            with pytest.raises(SystemExit, match="committed code and data"):
+                check_frozen(split, commit, uncommitted)
+        with pytest.raises(SystemExit):
+            check_frozen(split, None, None)
+        check_frozen(split, commit, False)
+    # Development runs may use code that is still changing.
+    check_frozen("dev", commit, True)
+    check_frozen("tuning", None, None)
+
+
+def test_the_code_version_comes_from_git():
+    commit, uncommitted = code_version(PACKAGE)
+
+    if commit is None:
+        pytest.skip("not in a git checkout")
+    assert len(commit) == 40
+    assert isinstance(uncommitted, bool)

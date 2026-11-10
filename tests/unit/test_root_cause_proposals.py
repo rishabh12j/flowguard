@@ -103,6 +103,19 @@ def test_schema_asks_for_an_alternative_but_code_accepts_one():
     assert len(hypotheses) == 1
 
 
+def test_a_repeated_category_is_kept_with_its_evidence():
+    # Dropping the repeat would also drop its evidence from the pooled score.
+    llm = FakeLLM(hypothesis("LOG-882"), hypothesis("DEPLOY-SOURCE-221"))
+
+    hypotheses, dropped = propose_hypotheses(INCIDENT, EVIDENCE, llm)
+
+    assert [h.supporting_evidence_ids for h in hypotheses] == [
+        ("LOG-882",),
+        ("DEPLOY-SOURCE-221",),
+    ]
+    assert dropped == ()
+
+
 def test_prompt_includes_the_incident_and_every_evidence_item():
     llm = FakeLLM(hypothesis("LOG-882"))
 

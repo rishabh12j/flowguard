@@ -46,7 +46,7 @@ flowchart TD
 | `log_analysis` | Searches logs in the incident window and marks the earliest error as the first failure. |
 | `runbook_retrieval` | Searches runbooks, API specs, and past incidents for the affected system. Runs in parallel with log analysis. |
 | `dependency_trace` | Gathers changes from the 24 hours before the first failure: deployments, alerts, and metrics, at the failing service or upstream of it on the dependency map. |
-| `root_cause` | Gemma proposes up to three hypotheses. Code scores each with the rubric, ranks them, and selects one only at 0.65 or above; otherwise FlowGuard abstains. |
+| `root_cause` | Gemma proposes up to three hypotheses. Code scores each with the rubric, ranks them, and selects one only at 0.65 or above; otherwise FlowGuard abstains. The explain path, in development and off by default, asks instead what failed from the symptoms and which change explains it (`graph/nodes/explain.py`). |
 | `remediation` | Gemma proposes up to five steps, chosen from the action catalogue. |
 | `validation` | Deterministic. Refuses any step that isn't catalogued, cites unknown or unrelated evidence, targets something not in the evidence, or runs before a fix it depends on. Attaches risk, rollback, verification, and approval from the catalogue. |
 | `audit` | Saves a new version of the record. Runs at the end of every path. |

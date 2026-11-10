@@ -120,6 +120,12 @@ class GroundTruth(Record):
     split: Literal["tuning", "held_out", "dev", "test"] = "tuning"
     # The benchmark's scenario family, when the incident was generated.
     family: str | None = None
+    # Since the benchmark from seed 2031: whether a change came before the failure,
+    # the failure had a cause with nothing changed before it, or there was no
+    # diagnosable cause; and whether the knowledge base has a runbook and a past
+    # incident for this kind of failure.
+    group: Literal["change", "nothing_changed", "no_cause"] | None = None
+    precedent: bool | None = None
     # Some incidents have no supportable root cause: the right answer is to abstain.
     expected_outcome: Literal["diagnose", "abstain"] = "diagnose"
     category: IncidentCategory

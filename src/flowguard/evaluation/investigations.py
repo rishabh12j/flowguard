@@ -8,6 +8,7 @@ import asyncio
 import math
 import os
 import statistics
+import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -103,6 +104,10 @@ class IncidentResult(Model):
     plan_recall: float | None
     # The share of planned steps that are in the reference plan; None with no plan.
     plan_precision: float | None = None
+    # The same over the steps that change a running system, leaving out follow-ups
+    # such as telling the owner: an extra follow-up is harmless, an extra change
+    # isn't. None when the plan changes nothing.
+    change_precision: float | None = None
     # Whether the reference plan, and FlowGuard's, have a step that fixes the
     # cause. None when there's no reference plan.
     fix_expected: bool | None = None
@@ -122,6 +127,10 @@ class IncidentResult(Model):
     evidence_score: float | None = None
     missing_sources: int = 0
     decision_rule: str | None = None
+    # Since 2026-11-10: why FlowGuard abstained, and the investigation's errors and
+    # notes, such as which change the explain path said explains the failure.
+    abstention: str | None = None
+    errors: list[str] = []
 
 
 class AbstentionResult(Model):
@@ -134,6 +143,9 @@ class Metrics(Model):
     # Over the incidents that should be diagnosed, with a 95% Wilson interval.
     diagnosis_accuracy: float
     diagnosis_accuracy_interval: tuple[float, float]
+    # The same, counting each family's variants as less than independent incidents,
+    # since they share their text. None outside the benchmark.
+    diagnosis_accuracy_interval_by_family: tuple[float, float] | None = None
     top_3_recall: float
     # Over the incidents where abstaining is right; None when there are none.
     abstention_accuracy: float | None
@@ -151,6 +163,7 @@ class Metrics(Model):
     plan_recall: float | None
     unsafe_proposals_blocked: int
     plan_precision: float | None = None
+    change_precision: float | None = None
     # Diagnosed incidents whose plan fixes nothing, though the reference plan does.
     missing_fixes: int = 0
     # Diagnosed incidents whose plan changes something, though the reference plan
@@ -178,6 +191,10 @@ class EvaluationReport(Model):
     # Held-out incidents are evaluated once and never used to tune FlowGuard.
     split: Split = "tuning"
     finished_at: datetime
+    # Since 2026-11-10: the commit the run's code came from, and whether the code or
+    # the data had uncommitted changes. None when git couldn't say.
+    commit: str | None = None
+    uncommitted: bool | None = None
     incidents: list[IncidentResult]
     abstentions: list[AbstentionResult]
     metrics: Metrics
@@ -241,8 +258,9 @@ def score_run(
     unsupported = sum(any(item not in gathered for item in cited) for cited in claims)
 
     planned = [(action.action, action.target) for action in record.actions]
+    changing = [(a.action, a.target) for a in record.actions if a.changes_state]
     reference = [(step.action, step.target) for step in truth.reference_plan]
-    changes_state = any(action.changes_state for action in record.actions)
+    changes_state = bool(changing)
 
     should_abstain = truth.expected_outcome == "abstain"
     if should_abstain:
@@ -279,6 +297,11 @@ def score_run(
         )
         if planned
         else None,
+        change_precision=round(
+            sum(step in reference for step in changing) / len(changing), 3
+        )
+        if changing
+        else None,
         fix_expected=fixes_cause(reference) if reference else None,
         fix_planned=fixes_cause(planned),
         rejected_steps=len(record.rejected_actions),
@@ -309,6 +332,8 @@ def score_run(
         evidence_score=record.evidence_score,
         missing_sources=record.missing_sources,
         decision_rule=record.decision_rule,
+        abstention=record.abstention,
+        errors=list(record.errors),
     )
 
 
@@ -322,12 +347,46 @@ def wilson(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
     """A 95% interval for a proportion, which stays sensible for small samples."""
     if total == 0:
         return (0.0, 0.0)
-    share = successes / total
+    return wilson_share(successes / total, total, z)
+
+
+def wilson_share(share: float, total: float, z: float = 1.96) -> tuple[float, float]:
+    """Wilson's interval from a share and a sample size, which needn't be whole."""
     denominator = 1 + z * z / total
     centre = (share + z * z / (2 * total)) / denominator
     half = z * math.sqrt(share * (1 - share) / total + z * z / (4 * total * total))
     half /= denominator
     return (round(max(0.0, centre - half), 3), round(min(1.0, centre + half), 3))
+
+
+def family_interval(results: Sequence[IncidentResult]) -> tuple[float, float] | None:
+    """A 95% interval for the share right that treats a family as one scenario.
+
+    Variants of a family share their text, so they succeed or fail together more
+    than independent incidents would. This is Wilson's interval on Kish's
+    effective sample size, from how much the families' scores differ: it lies
+    between the number of families, when variants always agree, and the number
+    of incidents, when the families don't differ at all. None without families.
+    """
+    groups: dict[str, list[bool]] = {}
+    for result in results:
+        if result.family is None:
+            return None
+        groups.setdefault(result.family, []).append(result.correct)
+    if len(groups) < 2:
+        return None
+    families = len(groups)
+    total = sum(len(group) for group in groups.values())
+    share = sum(sum(group) for group in groups.values()) / total
+    if share in (0.0, 1.0):
+        # Nothing varies, so nothing shows how independent the variants are.
+        return wilson_share(share, families)
+    spread = sum((sum(group) - share * len(group)) ** 2 for group in groups.values())
+    variance = families / (families - 1) * spread / total**2
+    if variance == 0:
+        return wilson_share(share, total)
+    effective = min(max(share * (1 - share) / variance, families), total)
+    return wilson_share(share, effective)
 
 
 # Confidence is the lead over the best other category (brief section on the
@@ -371,6 +430,7 @@ def summarise(
     correct = sum(r.correct for r in to_diagnose)
     plans = [r.plan_recall for r in results if r.plan_recall is not None]
     precisions = [r.plan_precision for r in results if r.plan_precision is not None]
+    changing = [r.change_precision for r in results if r.change_precision is not None]
     # Plans for a diagnosis, where the reference says whether a fix is needed.
     judged = [
         r for r in results if r.status != "abstained" and r.fix_expected is not None
@@ -384,6 +444,7 @@ def summarise(
     return Metrics(
         diagnosis_accuracy=round(correct / len(to_diagnose), 3) if to_diagnose else 0.0,
         diagnosis_accuracy_interval=wilson(correct, len(to_diagnose)),
+        diagnosis_accuracy_interval_by_family=family_interval(to_diagnose),
         top_3_recall=round(sum(r.top_3_hit for r in to_diagnose) / len(to_diagnose), 3)
         if to_diagnose
         else 0.0,
@@ -421,6 +482,7 @@ def summarise(
         plan_recall=round(statistics.mean(plans), 3) if plans else None,
         unsafe_proposals_blocked=sum(r.rejected_steps for r in results),
         plan_precision=round(statistics.mean(precisions), 3) if precisions else None,
+        change_precision=round(statistics.mean(changing), 3) if changing else None,
         missing_fixes=sum(bool(r.fix_expected) and not r.fix_planned for r in judged),
         unneeded_fixes=sum(not r.fix_expected and r.fix_planned for r in judged),
         confidence_auroc=auroc(
@@ -438,6 +500,7 @@ class Decider:
     rule: Rule = "rubric"
     fit: FitScorer | None = None
     check: bool = False
+    diagnosis: Literal["hypotheses", "explain"] = "hypotheses"
 
 
 DEFAULT_DECIDER = Decider()
@@ -509,6 +572,7 @@ async def run_incident(
                     rule=decider.rule,
                     fit=decider.fit,
                     check=decider.check,
+                    diagnosis=decider.diagnosis,
                 ),
             )
     except BaseExceptionGroup as group:
@@ -712,7 +776,13 @@ def render_markdown(report: EvaluationReport) -> str:
         "",
         f"Model: `{report.model}`. Finished {report.finished_at:%Y-%m-%d %H:%M} UTC. "
         f"{len(report.incidents)} incidents, each run once with all evidence and once "
-        "with log searches denied.",
+        "with log searches denied."
+        + (
+            f" Code from commit `{report.commit[:7]}`"
+            + (", with uncommitted changes." if report.uncommitted else ".")
+            if report.commit
+            else ""
+        ),
         "",
         "| Metric | Result | Target | |",
         "|---|---|---|---|",
@@ -776,11 +846,15 @@ def incidents_in(split: Split, data_dir: Path = DATA_DIR) -> list[str]:
     ]
 
 
-def described(model: str, think: str, rule: str, check: bool) -> str:
+def described(
+    model: str, think: str, rule: str, check: bool, diagnosis: str = "hypotheses"
+) -> str:
     """The report's model line: the model, and every setting that changes answers."""
     parts = [model]
     if think != "off":
         parts.append(f"reasoning {think}")
+    if diagnosis != "hypotheses":
+        parts.append(f"diagnosis {diagnosis}")
     if rule != "rubric":
         parts.append(f"rule {rule}")
     if check:
@@ -805,6 +879,43 @@ def model_for(name: str, think: str) -> LLM:
 
         return ClaudeLLM(name, effort=None if think == "off" else think)  # type: ignore[arg-type]
     return OllamaLLM(name, think=False if think == "off" else think)  # type: ignore[arg-type]
+
+
+PACKAGE = Path(__file__).resolve().parents[1]
+# The splits that are evaluated once: they run only from committed code and data,
+# so the report's commit is exactly what ran.
+ONCE: tuple[Split, ...] = ("held_out", "test")
+
+
+def code_version(*paths: Path) -> tuple[str | None, bool | None]:
+    """The commit HEAD points to, and whether these paths have uncommitted changes,
+    untracked files included. (None, None) when git can't say."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PACKAGE,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", *(str(p) for p in paths)],
+            cwd=PACKAGE,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None, None
+    return commit, bool(status.strip())
+
+
+def check_frozen(split: Split, commit: str | None, uncommitted: bool | None) -> None:
+    if split in ONCE and (commit is None or uncommitted is not False):
+        raise SystemExit(
+            f"The {split.replace('_', '-')} split runs once, so it runs only from "
+            "committed code and data: commit src/flowguard and the data folder first."
+        )
 
 
 def main() -> None:
@@ -853,8 +964,17 @@ def main() -> None:
         help="also ask the model to judge each hypothesis, a second call per "
         "investigation, so the checked rule has verdicts to use",
     )
+    parser.add_argument(
+        "--diagnosis",
+        choices=["hypotheses", "explain"],
+        default="hypotheses",
+        help="explain reads the symptoms, then asks which change explains them; "
+        "--rule and --check don't apply to it",
+    )
     arguments = parser.parse_args()
     split: Split = "held_out" if arguments.held_out else arguments.split
+    commit, uncommitted = code_version(PACKAGE, arguments.data_dir.resolve())
+    check_frozen(split, commit, uncommitted)
     # First, so a missing key fails before the embedder loads.
     llm = model_for(arguments.model, arguments.think)
 
@@ -863,7 +983,9 @@ def main() -> None:
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(evidence), embedder, client)
     # The fit costs one embedding per investigation, so it's always recorded.
-    decider = Decider(arguments.rule, CategoryFit(embedder), arguments.check)
+    decider = Decider(
+        arguments.rule, CategoryFit(embedder), arguments.check, arguments.diagnosis
+    )
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         report = asyncio.run(
@@ -872,7 +994,11 @@ def main() -> None:
                 partial(retrieve, embedder=embedder, client=client),
                 incidents_in(split, arguments.data_dir)[: arguments.limit],
                 described(
-                    arguments.model, arguments.think, arguments.rule, arguments.check
+                    arguments.model,
+                    arguments.think,
+                    arguments.rule,
+                    arguments.check,
+                    arguments.diagnosis,
                 ),
                 progress=lambda message: print(message, flush=True),
                 data_dir=arguments.data_dir,
@@ -880,7 +1006,9 @@ def main() -> None:
                 journal=arguments.output_dir / f"{report_name(split)}.journal.jsonl",
                 decider=decider,
             )
-        ).model_copy(update={"split": split})
+        ).model_copy(
+            update={"split": split, "commit": commit, "uncommitted": uncommitted}
+        )
     except ModelUnavailable as error:
         raise SystemExit(
             f"Stopped: the model failed on {error}. Finished incidents are kept; "
@@ -888,6 +1016,9 @@ def main() -> None:
         ) from error
     write_report(report, arguments.output_dir)
     print(render_markdown(report))
+    if arguments.diagnosis == "explain":
+        # The rules re-score proposed hypotheses; this path proposes none.
+        return
     # Imported here: the rules module builds on this one.
     from flowguard.evaluation.rules import compare, render
 

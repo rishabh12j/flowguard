@@ -512,6 +512,24 @@ Tune this rubric through evaluation rather than presenting it as universally cor
 > **Decided 2026-11-08:** the rubric is now one of five decision rules in `flowguard.domain.decision`, and stays the default until another passes a check on fresh incidents. The analysis of four runs on `data/benchmark-2028` showed the models proposed the right category 90% to 100% of the time, and that most misses came after that, in the rubric: 11 of Gemma's 14, 37 of gpt-oss's 47, and all 24 of Sonnet's. Two causes. Abstention is decided on the best hypothesis's own score, so a candid model that lists contradicting evidence, or one that puts the release on a hypothesis of its own, abstains when the incident's evidence is strong. And the ranking counts kinds of evidence, not whether they fit the category, so the release story wins. The new rules abstain on all the cited evidence scored together (`evidence`), add a bonus for the category whose definition best matches the error logs (`evidence`, `evidence_shared`), share a release's points among all hypotheses (`evidence_shared`), take the model's own first choice (`model`), or ask the model in a second call whether each hypothesis is what failed or only what came before (`checked`). Code still decides in every rule: the model's order and the check's verdicts are inputs, and the evidence gate applies to all of them. Every run records what each rule needs, so all five are scored from the same run.
 >
 > **How the rule is chosen, fixed before the runs.** Gemma and Sonnet each run `data/benchmark-2028` once with `--check`. A rule qualifies if, for both models, it makes no more wrong diagnoses than the rubric and abstains on all 10 incidents with no diagnosable cause. Of those, the one with the most right diagnoses, added across both models, is chosen. `checked` costs a second call, so it must beat the best of the others by 4 or more to be chosen; a tie goes to the simpler rule, in the order `evidence`, `evidence_shared`, `model`. If none qualifies, the rubric stays. The chosen rule is then confirmed once on a new seed, `data/benchmark-2030`, with one run per model. It passes if, for both models, it diagnoses at least 5 more of the 100 than the rubric on the same run, makes no more than one more wrong diagnosis, and abstains on at least 9 of the 10. Only then does it become the default. If it fails, that's reported as it is.
+>
+> **Selected 2026-11-08:** `evidence`, with 188 right diagnoses across both models on 2028, against 187 for `evidence_shared`, 186 for `checked`, 185 for `model`, and 162 for the rubric.
+
+> **Result 2026-11-09: the confirmation failed.** On `data/benchmark-2030`, judged by `python -m flowguard.evaluation.confirm`, which was written before the runs: Gemma diagnosed 91 under `evidence` against the rubric's 89, short of the 5 more needed, and Sonnet diagnosed 95 against 76 but made 4 wrong diagnoses against 2, one more than allowed. Both abstained on 10 of 10. Both extra wrong diagnoses came from the fit bonus, one decided by a fit margin of 0.002. The rubric stays the default, and 2030 is spent. Scoring all the cited evidence together is kept as a direction for a new rule, which would need its own fresh check.
+
+> **Decided 2026-11-09:** the root-cause prompt asks for three hypotheses in three different categories, and the schema sent to Ollama requires three. Gemma had repeated a category in 26 of 110 answers on 2028, and code can only choose from what's proposed. Repeats are still kept in code: dropping one would also drop its evidence from the pooled score. The change is checked once on `data/benchmark-2028`, a development set, against the 2026-11-08 Gemma run (`reports/benchmark-2028-rules-gemma`), with these marks fixed before the run. Under the rubric, it is kept if the right category is among the hypotheses in at least 97 of the 100 incidents with a cause, right diagnoses are 83 or more, wrong diagnoses 14 or fewer, and all 10 no-cause incidents are abstained on. Otherwise the prompt goes back to two or three hypotheses.
+
+> **Result 2026-11-09: the check failed, and the prompt is back to two or three hypotheses.** On `data/benchmark-2028` (`reports/benchmark-2028-three-hypotheses`), under the rubric, the right category was among the hypotheses in 99 of 100 (97 before) and all 10 no-cause incidents were abstained on, but right diagnoses fell from 85 to 77 and wrong ones rose from 12 to 19, missing two of the four marks. Asked for three categories, Gemma offered a release or setting (`deployment_or_configuration`) as the cause in 65 of the 90 incidents where that category is wrong (27 before) and cited the release for it, which the rubric rewards, so the rubric chose it in 14 (7 before). The other rules lost too, scored on the same answers: `evidence` 85 against 90, `evidence_shared` 84 against 91, and `model` 83 against 87. Gemma still repeated a category in 28 of 110 answers. The tested prompt is kept as `root-cause-prompt.patch` in the report folder, a patch against commit 7c85dfa, and a test now pins that a repeated category is kept with its evidence.
+
+> **Decided 2026-11-10:** a probe of a different way to choose the root cause, `python -m flowguard.evaluation.what_failed`. The rubric rewards whichever hypothesis cites a release, and it can't diagnose a cause with nothing changed before it, which caps every current rule at 75% on the next benchmark's test set. The probe asks Gemma one question, what failed, and shows it only the symptoms: the incident report, the logs, the API specs and the dependency map, each with a neutral ID. Releases, alerts, metrics, runbooks and past incidents are left out. Code accepts a category only when the answer cites a log; otherwise, or when Gemma answers unknown, it abstains. A dry run without the model confirmed that no original document ID and no mention of a release reaches the prompt. It runs once on `data/benchmark-2028`, a development set, with these marks fixed before the run and written into the module: at least 90 of the 100 incidents with a cause right (the rubric had 85, and Gemma's own first choice 88), and unknown for at least 9 of the 10 without one. If it passes, the full approach is built (asking several times and deciding by agreement, with a separate question for what changed) and developed on 2028 and the new development families. If it fails, it isn't built: the rubric stays, and the next benchmark reports its limits as they are.
+
+> **Result 2026-11-10: the probe failed, so the approach isn't built.** On `data/benchmark-2028` (`reports/benchmark-2028-what-failed`), Gemma named the right category for 90 of the 100 incidents with a cause, exactly the mark, but answered unknown for none of the 10 without one, where 9 were needed. Against the rubric on the same incidents (85), reading only the symptoms gained 13, mostly where a change triggered a different failure (dropped_index from 1 to 5 of 5, duplicates_after_failover from 2 to 5, consumers_scaled_down and pool_shrunk from 3 to 5), and lost 8: wrong_directory (5 to 0), where without the change a missing acknowledgement reads as a timeout, and encoding_change (3 to 0), read as a schema or data problem. On the no-cause incidents Gemma named what the scattered errors looked like, despite the instruction to answer unknown. Symptoms alone can name what failed, but can't tell whether there's a cause to name. The probe and its marks weren't committed before the run, only written in the module and this brief. The rubric stays.
+
+> **Decided 2026-11-10:** the next change is developed on `data/benchmark-2031/dev` only: the explain path, which reads the symptoms first and then asks which change, if any, explains them, with code deciding (`docs/next-benchmark.md`, "Development"). It's a second way to choose the root cause, off by default, so the rubric stays FlowGuard's default until a test run with marks fixed beforehand says otherwise. Both are frozen and run once on the 300 test incidents, reported by group and by precedent.
+
+> **Result 2026-11-10, development only:** on the 50 development incidents, the explain path named the right category for all 40 with a cause, including the 10 with nothing changed, and abstained on 9 of the 10 without one, with 1 wrong. The rubric had 23 right and 5 wrong, and abstained on all 10 with nothing changed, as built. These are development numbers, never accuracy (`docs/next-benchmark.md`, "Development"). The prompts were left as they were.
+
+> **Decided 2026-11-10, before the test run: its terms.** FlowGuard is frozen at the commit that adds this paragraph, tagged `benchmark-2031-frozen`; the runner refuses the test split with uncommitted code or data, and each report records its commit. Gemma runs the rubric and the explain path once each on the 300 test incidents. The explain path becomes the default only if all five marks hold: (1) at least 24 more right than the rubric on the 240 with a cause; (2) precision, right ÷ (right + wrong) over all 300, at least the rubric's; (3) an abstention on at least 54 of the 60 without a cause; (4) no more than 9 fewer right than the rubric on the 180 with a change; (5) in both runs, 0 unsafe actions, 0 approval bypasses, and an abstention on every incident when logs are denied. Otherwise the rubric stays the default. Both are reported in full either way, by group and by precedent (`docs/next-benchmark.md`, "Fixed before the test run"), and the test set is then spent.
 
 ---
 
@@ -1007,7 +1025,9 @@ The target must be zero.
 > - Test results: diagnosis 186/228 (82%, 95% Wilson interval 76% to 86%). The target is met on the point estimate but not with confidence. Top-3 recall was 88%, missing its 100% target, which was set for five seeded incidents.
 > - Safety on test: right abstentions 22/22, false abstentions 2%, abstention without logs 250/250, unsafe actions 0%, approval bypasses 0%, plan recall 80%.
 > - Dev scored 92%. The drop comes from four families. The rule "a change's effect takes the category of what went wrong" held for 93% of the dev incidents it applied to and 68% of the test ones. Gemma blamed the triggering release 21 times, but still planned the right rollback in 21 of 22 of those cases.
-> - The interval treats variants of one family as independent, so it is too narrow: this is closer to 11 scenarios than 228 incidents.
+> - The interval treats variants of one family as independent, so it is too narrow: this is closer to 11 scenarios than 228 incidents. Counted by family (added 2026-11-09, from the recorded results), it is 62% to 92%.
+>
+> **Later fresh sets, same 22 families** (`docs/evaluation.md`): 80% on `data/benchmark-2029` (2026-11-07) and 89% on `data/benchmark-2030` (2026-11-09), both with the rubric. All of these sets are now spent. An analysis on 2026-11-09 found that this benchmark gives some answers away: every incident has an exact precedent in the knowledge base, only incidents with a cause have a change before the failure, and document IDs carry the family's code. The next honest number comes from a new benchmark (section 32).
 
 ### Initial MVP targets
 
@@ -1311,32 +1331,15 @@ Resolve these only when they become necessary:
 
 ## 32. Current next action
 
-Build one coherent vertical slice for INC-001:
+**Updated 2026-11-10.** The vertical slice this section first described is built, and FlowGuard has been measured on 305 + 330 generated incidents. The `evidence` rule failed its confirmation on `data/benchmark-2030`, so the rubric stays the default. Every existing set is now spent or tuning data, and the analysis in `docs/evaluation.md` ("What the benchmark makes easy") found that the old benchmark gives some answers away. Asking Gemma for three hypotheses failed its check on `data/benchmark-2028` and was reverted (section 14). A probe of a different decision, asking only what failed from the symptoms, failed its check too (section 14). The next honest number comes from a new benchmark, planned in [`docs/next-benchmark.md`](docs/next-benchmark.md) and generated on 2026-11-10 in `data/benchmark-2031` (50 development incidents, 300 test incidents):
 
 ```
-synthetic incident
-    → MCP evidence access
-    → RAG retrieval
-    → LangGraph investigation
-    → evidence-backed root cause
-    → remediation proposal
-    → validation
-    → human approval
-    → audit report
-```
-
-Do not start with all five incidents, a frontend, or real cloud integrations. Prove the complete control flow first.
-
-Immediate order of work:
-
-```
-M0: repository foundation
+develop on the 50: let Gemma use a change to explain the symptoms,
+so causes with no preceding change can be diagnosed            (done)
         ↓
-M1: one coherent INC-001 dataset
+freeze FlowGuard and record the test run's terms in section 14 (done)
         ↓
-deterministic Python solver
-        ↓
-first read-only MCP server
+run the 300 once with Gemma and report the result as it is
 ```
 
-Do not introduce the LLM until a normal Python program can solve INC-001 from the supplied evidence. That prevents debugging bad synthetic data, retrieval, MCP, LangGraph, and model behaviour simultaneously.
+Nothing is tuned on the spent sets (the held-out incidents, the test split, `data/benchmark-2029`, `data/benchmark-2030`), and nothing runs on a test family before the final run.

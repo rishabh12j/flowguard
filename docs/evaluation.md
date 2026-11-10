@@ -2,7 +2,7 @@
 
 How well FlowGuard diagnoses incidents, and how safely it plans, with `gemma4:12b`: on five incidents used for tuning, on three held out from tuning and evaluated once, and on a generated benchmark of 305 incidents, whose 250 test incidents were run once with nothing changed afterwards.
 
-**The headline:** on the 250 test incidents, FlowGuard diagnosed 186 of 228 correctly (**82%, 95% interval 76% to 86%**), abstained correctly on 22 of 22, planned no unsafe action, and bypassed approval in none. Diagnosis was 99% on seven of the eleven test families and 39% to 83% on the other four. [Benchmark](#benchmark) has the details.
+**The headline:** on the 250 test incidents, FlowGuard diagnosed 186 of 228 correctly (**82%, 95% interval 76% to 86%**), abstained correctly on 22 of 22, planned no unsafe action, and bypassed approval in none. Diagnosis was 99% on seven of the eleven test families and 39% to 83% on the other four. Variants of one family succeed or fail together, so counting each family as one scenario, the interval is **62% to 92%**. Two later fresh sets scored 80% and 89%. [Benchmark](#benchmark) has the details, and [What the benchmark makes easy](#what-the-benchmark-makes-easy) why the next number needs a new one.
 
 ## Method
 
@@ -36,6 +36,9 @@ Each has decoys: deployments and alerts downstream of the failure or outside the
 | Approval-bypass rate | Investigations with a state-changing plan that didn't end awaiting approval |
 | Abstention without logs | Runs with log searches denied that abstained |
 | Plan recall | Reference-plan steps that appear in the final plan |
+| Plan precision | Final-plan steps that appear in the reference plan |
+| Change precision | The same, over the steps that change a running system. A follow-up outside the reference, such as telling the owner, is harmless; an extra change isn't. Added 2026-11-09 |
+| Accuracy interval by family | Wilson's interval on Kish's effective sample size, which counts a family's variants as less than independent incidents, since they share their text. It lies between the number of families and the number of incidents. Added 2026-11-09 |
 
 ## Results
 
@@ -143,7 +146,9 @@ Abstain-aware scoring: diagnosis accuracy is measured over the incidents with a 
 | Right at moderate confidence | 100% | 85% | |
 | Median latency | 42 s | 46 s | |
 
-Intervals are 95% Wilson intervals. The test set's point estimate meets the 80% target, but its interval goes down to 76%, so the result doesn't show with confidence that the target is met. Top-3 recall misses its target: in 12% of incidents, the right category wasn't among the three hypotheses at all.
+Intervals are 95% Wilson intervals. The test set's point estimate meets the 80% target, but its interval goes down to 76%, so the result doesn't show with confidence that the target is met. Those intervals treat incidents as independent. Counted by family (computed on 2026-11-09 from the recorded results, nothing rerun), the test set's interval is 62% to 92%. Top-3 recall misses its target: in 12% of incidents, the right category wasn't among the three hypotheses at all.
+
+Most of the steps outside the reference plans are follow-ups. On the test set, 260 extra steps told an owner, added monitoring or added a contract test, and 67 changed something the reference didn't. Over state-changing steps only, precision is 79%, against 63% over all steps.
 
 ### By test family
 
@@ -274,6 +279,33 @@ Every rule abstained on all 10 incidents with no diagnosable cause, and none mad
 
 One cost the pass mark doesn't measure: confidence is still the lead on the rubric's support, and under `evidence` the chosen hypothesis can have less support than another, so confidence separates right from wrong less well (AUROC 0.69 to 0.58 for Gemma, 0.85 to 0.70 for Sonnet). Confidence was already not calibrated for Gemma.
 
+### The confirmation on benchmark-2030
+
+On 2026-11-09, `evidence` ran once per model on `data/benchmark-2030`: 110 incidents from a new seed that no model had seen. The pass mark was fixed beforehand and coded as `python -m flowguard.evaluation.confirm` before the runs. Each run is compared with the rubric re-scored from the same answers.
+
+| | Gemma, rubric | Gemma, `evidence` | Sonnet, rubric | Sonnet, `evidence` | Needed |
+|---|---|---|---|---|---|
+| Diagnosed, of 100 | 89 | 91 (+2) | 76 | 95 (+19) | +5 or more |
+| Wrong diagnoses | 8 | 7 (−1) | 2 | 4 (+2) | +1 or fewer |
+| No-cause incidents abstained | 10 of 10 | 10 of 10 | 10 of 10 | 10 of 10 | 9 or more |
+| Interval by family | 77% to 95% | 78% to 97% | 61% to 86% | 85% to 99% | |
+| Confidence AUROC | 0.56 | 0.51 | 0.33 | 0.61 | not judged |
+
+**It failed, with both models, for different reasons.** For Gemma, the gain shrank from +5 on 2028 to +2, inside run-to-run noise: Gemma's misses are its own first choices, and no rule can fix those. For Sonnet, scoring all the evidence together again rescued the answers the rubric abstained on (+19, after +21 on 2028), but the fit bonus made 2 more wrong diagnoses. In BENCH-0105 the rubric was right, and the bonus went to another category whose fit was higher by 0.002. In BENCH-0012 the rubric abstained, and the bonus lifted a hypothesis with less support (0.35) above the right one (0.45).
+
+The rubric stays the default, and nothing is tuned on 2030, which is now spent like 2029 and the test set. Two observations are kept as directions for a new rule, which would need its own fresh check: scoring all the evidence together is robust for a model that lists contradicting evidence, and a fit bonus decided by near-ties is noise.
+
+### What the benchmark makes easy
+
+An analysis of the development runs on `data/benchmark-2028`, on 2026-11-09, found four ways this benchmark is easier than real incidents. Each is addressed in the next benchmark's design, not by tuning FlowGuard on this one.
+
+- **Every incident has an exact precedent.** Each system's knowledge base holds a runbook and a past-incident write-up for the same failure, and the write-up states the root cause. Gemma's hypotheses cited a document of the incident's own family in 99 of 110 incidents, and the matching past incident in 85.
+- **A preceding change separates the two outcomes.** Every family with a cause has a causal change: a release, an alert, or a metric crossing its threshold. The no-cause families have none, and the generator never adds a harmless upstream change inside their lookback. Scored together, the cited evidence reaches 0.65 only with a change, so abstaining on every no-cause incident follows from how they were built. It doesn't show FlowGuard can tell a coincidental change from a cause. Gemma ignored harmless decoy releases when a real cause was present (it never ranked one first), but no incident tests a decoy without one.
+- **Document IDs carry the family's code**, such as `SPEC-PRICING-U2`, and the codes' letters follow the categories. The model sees these IDs.
+- **The sample is the number of families.** Variants share their error text, so they tend to succeed or fail together. The test set's 228 incidents with a cause are 10 scenarios; counted that way, its interval is 62% to 92%, not 76% to 86%.
+
+Within these limits, Gemma's remaining errors on 2028 are its own. It proposed the right category in 97 of 100 incidents and ranked it first in 88, and every wrong answer under `evidence` was one where Gemma itself ranked another cause first. 8 of the 10 misses in that run were in four families where a release triggered a different failure (dropped_index, consumers_scaled_down, encoding_change and pool_shrunk). A better rule can add little there, and a prompt aimed at those families would teach this benchmark's labelling convention, not diagnosis. Gemma also repeated a category in 26 of 110 answers, leaving fewer alternatives. Asking for three hypotheses in three categories, checked once on 2028 against marks fixed beforehand, made things worse: the right category was proposed in 99 of 100, but under the rubric right diagnoses fell from 85 to 77 and wrong ones rose from 12 to 19, and the other rules lost 4 to 7 as well. Pushed for alternatives, Gemma offered the release itself as the cause (in 65 of the 90 incidents where that's wrong, against 27) and cited the release for it, which is what the rubric rewards most. The prompt went back to two or three hypotheses (`reports/benchmark-2028-three-hypotheses/`). A probe that showed Gemma only the symptoms and asked what failed also failed its marks on 2028. It named the right category for 90 of 100, fixing most misses where a change triggered a different failure, but it never answered unknown for the 10 incidents with no cause, and it lost wrong_directory, where the change is what shows the files went to the wrong place (`reports/benchmark-2028-what-failed/`).
+
 ### Why the interim score was higher
 
 Partway through the run, after 136 incidents, the score was 108 of 124 (87%, 80% to 92%). The final 82% is inside that interval. In the second half:
@@ -287,7 +319,8 @@ The order was shuffled and nothing changed during the run, so this is most likel
 
 - **The 5/5 is partly tuning.** Changes 2 and 3 were written after seeing these incidents fail. The number shows the fixes work on these cases. The held-out 3/3 is the better measure of diagnosis, though it's three incidents, written by the same person who wrote the prompt.
 - **Five synthetic incidents.** Each one moves accuracy by 20 points, and they were written by the same person who built the system, to be solvable.
-- **The benchmark's interval is too narrow.** The Wilson interval treats the 228 test incidents as independent. Variants of one family succeed or fail together, though, so the benchmark is closer to 11 scenarios than to 228 independent incidents. The interval describes more variants of these 11 families. A different set of families could move the score much more than 76% to 86% suggests.
+- **The benchmark's interval is too narrow.** The Wilson interval treats the 228 test incidents as independent. Variants of one family succeed or fail together, though, so the benchmark is closer to 11 scenarios than to 228 independent incidents. Counted by family, the interval is 62% to 92%: a different set of families could move the score that much.
+- **The benchmark gives answers away.** Every incident has an exact precedent in the knowledge base, and only incidents with a cause have a change before the failure. See [What the benchmark makes easy](#what-the-benchmark-makes-easy).
 - **One author.** The families, their category labels, their reference plans, the category definitions, and the system were all written by one person. Labels such as encoding_change's may reflect the author's reading, and the dev reference plan for duplicates_after_failover uses `pause_job` beyond its stated purpose. The benchmark's checker can't catch a wrong label.
 - **A gap in the catalogue.** No action describes stopping a worker that is doing harm, so some plans can't contain the fix. On dev, a retry for plans without a fix changed nothing, and it was removed (`reports/benchmark/evaluation-dev-plan-retry.*`).
 - **Synthetic and templated.** Every benchmark incident follows its family's template, with clean logs and one root cause. Real incidents are messier.
@@ -337,4 +370,5 @@ Comparing the decision rules: a run with `--check` records everything all five r
 ```powershell
 python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --split dev --output-dir reports/benchmark-2028-rules-gemma --check
 python -m flowguard.evaluation.rules reports/benchmark-2028-rules-gemma reports/benchmark-2028-rules-claude
+python -m flowguard.evaluation.confirm reports/benchmark-2030-gemma reports/benchmark-2030-claude   # the pass mark for a rule's one confirmation
 ```

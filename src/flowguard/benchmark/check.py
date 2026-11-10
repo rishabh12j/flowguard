@@ -5,6 +5,10 @@
 Every incident must load, keep its evidence unchanged by redaction, stay isolated
 from the others in time, and be solved by the oracle through the real graph:
 the right category at 0.65 or above with the reference plan, or an abstention.
+A cause with no change before it can't reach 0.65 under the rubric, so for one
+the oracle must gather the required evidence and propose the right category,
+and its reference plan must pass validation on the evidence gathered. Every
+prompt must also fit in the model's context.
 """
 
 import argparse
@@ -13,6 +17,7 @@ from collections import Counter
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 from qdrant_client import QdrantClient
 
@@ -24,8 +29,11 @@ from flowguard.dataset import (
 )
 from flowguard.domain.audit import InvestigationRecord
 from flowguard.domain.causality import LOOKBACK
+from flowguard.domain.evidence import EvidenceItem
 from flowguard.domain.incidents import Incident
 from flowguard.domain.redaction import redact_evidence
+from flowguard.domain.remediation import ProposedAction
+from flowguard.domain.validation import check_actions
 from flowguard.evaluation.investigations import run_incident
 from flowguard.evaluation.oracle import Oracle
 from flowguard.graph.nodes.root_cause import MIN_CONFIDENCE
@@ -33,6 +41,23 @@ from flowguard.rag.embedding import SentenceTransformerEmbedder
 from flowguard.rag.ingestion import ingest, knowledge_chunks
 from flowguard.rag.retrieval import retrieve
 from flowguard.seed_schemas import GroundTruth
+
+# Ollama is given 8,192 tokens. About 3.5 characters a token for this text, with
+# room left for the answer.
+MAX_PROMPT_CHARACTERS = 24_000
+CHANGES = ("deployment", "alert", "metric")
+
+
+class MeasuredOracle(Oracle):
+    """The oracle, keeping the size of the largest prompt it was sent."""
+
+    def __init__(self, truth: GroundTruth) -> None:
+        super().__init__(truth)
+        self.largest = 0
+
+    def generate(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
+        self.largest = max(self.largest, len(system) + len(prompt))
+        return super().generate(system, prompt, schema)
 
 
 def solved(record: InvestigationRecord, truth: GroundTruth) -> list[str]:
@@ -75,6 +100,34 @@ def solved(record: InvestigationRecord, truth: GroundTruth) -> list[str]:
     return problems
 
 
+def solved_without_change(
+    record: InvestigationRecord,
+    truth: GroundTruth,
+    by_id: dict[str, EvidenceItem],
+) -> list[str]:
+    """What's wrong with the oracle's result for a cause with no change before it."""
+    if record.selected_hypothesis_id is not None:
+        return solved(record, truth)
+    found = {item.split("#")[0] for item in record.evidence_ids}
+    missing = sorted(set(truth.required_evidence_ids) - found)
+    if missing:
+        return [f"required evidence not gathered: {missing}"]
+    if not record.hypotheses or record.hypotheses[0].category != truth.category:
+        return ["the oracle's hypothesis wasn't recorded with the right category"]
+    gathered = [by_id[i] for i in record.evidence_ids if i in by_id]
+    proposed = [
+        ProposedAction(
+            action=step.action,
+            target=step.target,
+            reason="From the runbook.",
+            evidence_ids=(truth.required_evidence_ids[0],),
+        )
+        for step in truth.reference_plan
+    ]
+    _, rejected = check_actions(proposed, gathered, record.hypotheses[0])
+    return [f"plan refused: {[r.problem for r in rejected]}"] if rejected else []
+
+
 async def check(data_dir: Path) -> list[str]:
     problems: list[str] = []
     evidence = load_evidence(data_dir)
@@ -108,15 +161,33 @@ async def check(data_dir: Path) -> list[str]:
     client = QdrantClient(":memory:")
     ingest(knowledge_chunks(evidence), embedder, client)
     search = partial(retrieve, embedder=embedder, client=client)
+    by_id = {item.evidence_id: item for item in evidence}
+    largest = 0
     for number, incident_id in enumerate(incidents, start=1):
         truth = truths[incident_id]
+        oracle = MeasuredOracle(truth)
         record, _ = await run_incident(
-            incident_id, Oracle(truth), search, data_dir=data_dir, evidence=evidence
+            incident_id, oracle, search, data_dir=data_dir, evidence=evidence
         )
-        for problem in solved(record, truth):
+        largest = max(largest, oracle.largest)
+        if oracle.largest > MAX_PROMPT_CHARACTERS:
+            problems.append(
+                f"{incident_id}: a prompt of {oracle.largest} characters may not "
+                "fit the model's context"
+            )
+        change_required = any(
+            i in by_id and by_id[i].source_type in CHANGES
+            for i in truth.required_evidence_ids
+        )
+        if truth.expected_outcome == "diagnose" and not change_required:
+            found = solved_without_change(record, truth, by_id)
+        else:
+            found = solved(record, truth)
+        for problem in found:
             problems.append(f"{incident_id} ({truth.family}): {problem}")
         if number % 50 == 0:
             print(f"checked {number} of {len(incidents)}", flush=True)
+    print(f"largest prompt: {largest} characters", flush=True)
     return problems
 
 
