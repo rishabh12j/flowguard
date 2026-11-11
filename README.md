@@ -14,22 +14,25 @@ Incident  →  logs, deployments, alerts, metrics, dependency map   (MCP tools)
 
 ## What it does well, and what it doesn't
 
-FlowGuard with `gemma4:12b` on `data/benchmark-2031`: 300 test incidents from 30 scenario families that no model saw during development, run once from a tagged commit, with the terms fixed beforehand. Since 2026-11-11 FlowGuard diagnoses with the explain path; the rubric it replaced ran on the same incidents.
+FlowGuard with `gemma4:12b` on `data/benchmark-2031`: 300 test incidents from 30 scenario families that no model saw during development, run once from a tagged commit, with the terms fixed beforehand. Since 2026-11-11 FlowGuard diagnoses with the explain path; the rubric it replaced ran on the same incidents. To compare a local model with a hosted one, Claude Sonnet 5.5 then ran the explain path on the same incidents, under the same code.
 
-| | Explain path (default) | Rubric (before) |
-|---|---|---|
-| Diagnosed correctly, of 240 with a cause | **206, 86%** (81% to 90%; 70% to 94% counting each family as one scenario) | 139, 58% |
-| … where a change came first (180) | 161 | 139 |
-| … where nothing changed (60) | 45 | 0, by construction |
-| Wrong diagnoses | 31 (30, and 1 of the 60 without a cause) | 23 |
-| Right when it gave an answer | 87% (206 of 237) | 86% (139 of 162) |
-| Abstained where there's no cause | 59 of 60 | 60 of 60 |
-| Unsafe actions planned, approval bypasses | **0, 0** | 0, 0 |
-| Abstained when its logs were withheld | 300 of 300 | 300 of 300 |
-| Plan includes the reference fix steps | 67% | 54% |
-| Median time per investigation | 48 s | 39 s |
+| | Gemma, explain path (default) | Sonnet 5.5, explain path | Gemma, rubric (before) |
+|---|---|---|---|
+| Diagnosed correctly, of 240 with a cause | **206, 86%** (81% to 90%; 70% to 94% counting each family as one scenario) | 217, 90% (86% to 94%; 76% to 96%) | 139, 58% |
+| … where a change came first (180) | 161 | 176 | 139 |
+| … where nothing changed (60) | 45 | 41 | 0, by construction |
+| Wrong diagnoses | 31 (30, and 1 of the 60 without a cause) | **1** | 23 |
+| Right when it gave an answer | 87% (206 of 237) | 99.5% (217 of 218) | 86% (139 of 162) |
+| Abstained where there's no cause | 59 of 60 | 60 of 60 | 60 of 60 |
+| Unsafe actions planned, approval bypasses | **0, 0** | 0, 0 | 0, 0 |
+| Abstained when its logs were withheld | 300 of 300 | 300 of 300 | 300 of 300 |
+| Plan includes the reference fix steps | 67% | 75% | 54% |
+| Median time per investigation | 48 s | 11 s | 39 s |
+| Cost of the 300 | nothing per call, local | $6.27, about 2 cents an incident | nothing per call, local |
 
-The explain path asks Gemma two questions: what failed, from the symptoms alone, and which change, if any, explains it. Code decides from the answers. It stopped the rubric's main mistake, blaming the release that only triggered a different failure, and it diagnoses causes with nothing changed before them, which the rubric can't. 29 of its 31 wrong answers came from four families, where Gemma named the failure by its surface symptom: a truncated upload as a timeout (10 of 10), a poison message as a schema mismatch (10 of 10), a changed filename pattern as a schema or data problem (6), and a receiver that stopped polling as a queue problem (3). Its plans propose more fixes the reference doesn't have than the rubric's did (39 against 18), all held for approval. One of the five marks fixed before the run, precision, was worded ambiguously: read as the share of answers that were right, the explain path passes (87% against 86%); read literally, counting right abstentions too, it misses by 0.1 points. The switch was decided after seeing that ([brief](brief.md), section 14). The incidents are synthetic, and one person wrote both them and FlowGuard. [`docs/evaluation.md`](docs/evaluation.md#benchmark-2031) has the details.
+The explain path asks Gemma two questions: what failed, from the symptoms alone, and which change, if any, explains it. Code decides from the answers. It stopped the rubric's main mistake, blaming the release that only triggered a different failure, and it diagnoses causes with nothing changed before them, which the rubric can't. 29 of its 31 wrong answers came from four families, where Gemma named the failure by its surface symptom: a truncated upload as a timeout (10 of 10), a poison message as a schema mismatch (10 of 10), a changed filename pattern as a schema or data problem (6), and a receiver that stopped polling as a queue problem (3). Its plans propose more fixes the reference doesn't have than the rubric's did (39 against 18), all held for approval. One of the five marks fixed before the run, precision, was worded ambiguously: read as the share of answers that were right, the explain path passes (87% against 86%); read literally, counting right abstentions too, it misses by 0.1 points. The switch was decided after seeing that ([brief](brief.md), section 14).
+
+Sonnet's real advantage is that its answers can be trusted. It was wrong once in 218 answers, where Gemma was wrong once in eight. Its extra right diagnoses (217 against 206) are within what one run can't tell from chance. It got right the families where Gemma named the surface symptom, and its own 22 misses were all abstentions after a right reading: mostly causes with nothing changed, where it said nothing in the evidence explains the failure. It was four times faster, at about 2 cents an incident. Gemma stays FlowGuard's model, as fixed before the run. The incidents are synthetic, and one person wrote both them and FlowGuard. [`docs/evaluation.md`](docs/evaluation.md#benchmark-2031) has the details.
 
 ### The earlier benchmark
 
@@ -165,13 +168,13 @@ src/flowguard/
   domain/       Models and rules: incidents, evidence, confidence, remediation, validation, redaction
   mcp/          MCP servers (observability, operations, knowledge), tool guard, client adapter
   rag/          Chunking, embedding, ingestion, retrieval
-  llm/          Ollama client
+  llm/          Ollama client, and a Claude client for comparing models
   storage/      Append-only audit store
   evaluation/   Retrieval and investigation evaluations
   benchmark/    The benchmark's scenario families, generator, and checker
 data/           Eight seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
 data/benchmark/ The generated benchmark: 305 incidents
-data/benchmark-2031/  The next benchmark: 50 development and 300 test incidents, no model run yet
+data/benchmark-2031/  The newer benchmark: 50 development and 300 test incidents (the test incidents are spent)
 reports/        Evaluation results; the benchmark's are in reports/benchmark/
 ```
 

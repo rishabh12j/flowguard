@@ -342,6 +342,35 @@ On 2026-11-11, FlowGuard ran once on the 300 test incidents of `data/benchmark-2
 
 **Limits of this number.** The families, their labels and FlowGuard were written by one person, who also wrote the explain path's prompts beside the development families. 30 families is a small sample of kinds of failure, and counted by family the interval is 70% to 94%. The test folder is now spent: the four families above can't be used to tune the explain path. Reports: `reports/benchmark-2031-test-explain` and `reports/benchmark-2031-test-rubric`.
 
+### A hosted model on the same incidents
+
+Later on 2026-11-11, Claude Sonnet 5.5 (`claude-sonnet-5-5`, thinking off, as Gemma runs) ran the explain path once on the same 300 incidents, to compare the local model with a hosted one under the same code. The terms were written into the brief (section 14) before the run, including that nothing in FlowGuard would change whatever it showed. The explain path's logic was unchanged since the frozen commit. The run came from `3dd4fc0`, which differs only in the new default, a fix to the Claude client (it had removed the reading's `pattern` field from the schema it sends) and accepting an `ant` login. The 10-incident pilot meant to measure the cost was skipped. Report: `reports/benchmark-2031-test-explain-sonnet`.
+
+| | Gemma 12B, local | Sonnet 5.5, hosted |
+|---|---|---|
+| Right, of 240 with a cause | 206, 86% (81% to 90%; by family 70% to 94%) | 217, 90% (86% to 94%; by family 76% to 96%) |
+| A change before the cause (180) | 161 right, 17 wrong, 2 abstained | 176 right, 1 wrong, 3 abstained |
+| A cause with nothing changed (60) | 45 right, 13 wrong, 2 abstained | 41 right, 0 wrong, 19 abstained |
+| No cause (60) | 59 abstained, 1 wrong | 60 abstained |
+| Right ÷ (right + wrong), answers only | 206 of 237, 86.9% | 217 of 218, 99.5% |
+| First question named the right category | 209 of 240 | 239 of 240 |
+| Unsafe actions, approval bypasses | 0, 0 | 0, 0 |
+| Abstained without logs | 300 of 300 | 300 of 300 |
+| Plan recall, plan precision, change precision | 67%, 56%, 70% | 75%, 60%, 73% |
+| Unneeded fixes; unsafe proposals blocked by validation | 39; 79 | 36; 62 |
+| Median and p95 time | 48 s, 68 s | 11 s, 16 s |
+| Cost of the 300 | nothing per call | $6.27: 2,082,716 tokens in, 210,564 out |
+
+**Where they differ.** Sonnet was right on 28 incidents with a cause that Gemma missed: all 10 poison_message (Gemma read a schema mismatch), 9 of 10 truncated_upload (Gemma read a timeout), 6 filename_pattern_changed, and one each in ordering_broken_by_concurrency, default_country_assumed and receiver_stopped_polling. It also abstained on the sporadic_partner_502s incident Gemma diagnosed as networking. Gemma was right on 17 that Sonnet abstained on: 9 partner_requires_new_field, 4 receiver_stopped_polling, 2 subscription_lapsed, 1 partner_degraded and 1 ordering_broken_by_concurrency. Both were wrong on one truncated_upload incident, which Sonnet also read as a timeout and blamed on a release. Precedent made little difference for either: where a change came first, Sonnet was right on 87 of 90 with a runbook and a past incident and 89 of 90 without.
+
+**Sonnet's misses are caution; Gemma's are misreadings.** Sonnet's first question, which sees only the symptoms, named the right category on 239 of 240 incidents with a cause, and all 22 of its abstentions followed a right reading. 19 were where nothing had changed. Asked which change explains the failure, Sonnet answered that nothing in the evidence does, where Gemma answered that no change was needed: all 10 partner_requires_new_field, 7 receiver_stopped_polling and 2 subscription_lapsed. FlowGuard treats that answer as an abstention. The other 3 Sonnet judged isolated problems, not sustained failures (2 ordering_broken_by_concurrency, 1 partner_degraded). Gemma's first question misnamed the failure on 31 of 240. The test folder is spent, so none of this can be used to tune the explain path.
+
+**Which differences are real.** On the same incidents, the incidents only one model got right split 28 to 17, and an exact paired test can't tell that from chance (p = 0.14). The incidents only one model got wrong split 30 to 0, which isn't chance (p = 2 × 10⁻⁹). So the clear difference is in wrong answers, not right ones: Sonnet was wrong once in 218 answers, Gemma once in 8.
+
+**What this means for FlowGuard.** The local 12B model, with no cost per call, came within 11 right diagnoses of a hosted frontier model under the same code. But the hosted model's answers can be trusted almost every time, and the local model's can't: one in eight is wrong, with nothing in the answer to tell which. Sonnet was also about four times faster, at about 2 cents an incident. Gemma stays FlowGuard's model, as fixed before the run. Gemma's wrong answers, where the surface symptom names the wrong category, are what the next development families are for (brief, section 32).
+
+**Limits.** One run per model. The prompts were written beside Gemma on the development families. The test folder had already been run once with Gemma, though nothing in the explain path changed in between.
+
 ## Limits
 
 - **The 5/5 is partly tuning.** Changes 2 and 3 were written after seeing these incidents fail. The number shows the fixes work on these cases. The held-out 3/3 is the better measure of diagnosis, though it's three incidents, written by the same person who wrote the prompt.
