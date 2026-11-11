@@ -535,6 +535,8 @@ Tune this rubric through evaluation rather than presenting it as universally cor
 
 > **Decided 2026-11-11:** the explain path is FlowGuard's default way to diagnose (`Dependencies.diagnosis`, so the API and the demo use it, and the evaluation runner's `--diagnosis`). The user decided after seeing the result, reading mark 2 as the precision of the answers given, so the switch rests on that reading chosen afterwards as well as on the marks fixed before. The rubric's hypotheses path stays, as `--diagnosis hypotheses`, to compare against; the benchmark checker's oracle still answers its questions. The test folder of `data/benchmark-2031` is spent. Further work on the explain path is developed on new development families, never on the four test families it missed.
 
+> **Decided 2026-11-11, before the run: a hosted model on the same test set.** To compare local Gemma with a hosted model under the same code, Claude Sonnet 5.5 (`claude-sonnet-5-5`, thinking off, as Gemma runs) runs the explain path once on the 300 test incidents of `data/benchmark-2031`, from the commit that adds this paragraph. The explain path's logic is unchanged since the frozen commit `0665d4e`; the only differences are the new default and a fix to the Claude client, which had removed the reading's `pattern` field from the schema it sends. The test folder is spent, and this is one more run of it, allowed by the user because it measures a different model and changes nothing in FlowGuard: Gemma stays the model and the explain path the default, whatever the result. Reported, whatever it shows: right, wrong and abstained on the 240 with a cause; the precision of the answers given; abstentions on the 60 without one; each by group; the incidents each model got right that the other didn't; unsafe actions, approval bypasses, median time, and the tokens used and their cost. A 10-incident pilot runs first to measure the cost; if the credit runs out before 300, the result is reported on the incidents finished, against Gemma on the same incidents, and labelled partial.
+
 ---
 
 ## 15. MCP design
@@ -1338,9 +1340,9 @@ Resolve these only when they become necessary:
 **Updated 2026-11-11.** FlowGuard has a new honest number. On the 300 test incidents of `data/benchmark-2031`, run once from a frozen commit, the explain path diagnosed 206 of the 240 with a cause (86%; 70% to 94% counting families) and abstained on 59 of the 60 without one, against the rubric's 139 and 60 (section 14). Since 2026-11-11 it's FlowGuard's default, and the rubric stays available to compare against. Every existing test set is now spent. Next, as proposed on 2026-11-11:
 
 ```
-work on the explain path with new development families: failures
-whose surface symptom points to the wrong category, and plans that
-propose fixes nobody needed
+work on the explain path's diagnosis with new development families:
+failures whose surface symptom points to the wrong category
+(plans stay secondary: the project's question is what caused it)
         ↓
 fix the next test run's terms here, with a fresh test set
         ↓

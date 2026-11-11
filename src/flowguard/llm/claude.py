@@ -37,14 +37,18 @@ def claude_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
     def strip(node: Any) -> Any:
         if isinstance(node, dict):
-            kept = {
-                key: strip(value)
-                for key, value in node.items()
-                if key not in UNSUPPORTED
-                # Only "at least one" is supported; "at least two" is asked for in
-                # the prompt and checked by code instead.
-                and not (key == "minItems" and value > 1)
-            }
+            kept = {}
+            for key, value in node.items():
+                if key in ("properties", "$defs") and isinstance(value, dict):
+                    # Field names, not keywords: the explain path's reading has a
+                    # field called "pattern", which must stay.
+                    kept[key] = {name: strip(field) for name, field in value.items()}
+                elif key not in UNSUPPORTED and not (
+                    # Only "at least one" is supported; "at least two" is asked for
+                    # in the prompt and checked by code instead.
+                    key == "minItems" and value > 1
+                ):
+                    kept[key] = strip(value)
             return kept
         if isinstance(node, list):
             return [strip(item) for item in node]

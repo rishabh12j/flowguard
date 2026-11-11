@@ -1018,18 +1018,18 @@ def main() -> None:
         ) from error
     write_report(report, arguments.output_dir)
     print(render_markdown(report))
-    if arguments.diagnosis == "explain":
-        # The rules re-score proposed hypotheses; this path proposes none.
-        return
-    # Imported here: the rules module builds on this one.
-    from flowguard.evaluation.rules import compare, render
+    # The rules re-score proposed hypotheses; the explain path proposes none.
+    if arguments.diagnosis == "hypotheses":
+        # Imported here: the rules module builds on this one.
+        from flowguard.evaluation.rules import compare, render
 
-    lines = ["# Decision rules", ""] + render(report.model, compare(report.incidents))
-    rules = "\n".join(lines)
-    (arguments.output_dir / f"{report_name(split)}-rules.md").write_text(
-        rules, encoding="utf-8"
-    )
-    print(rules)
+        lines = ["# Decision rules", ""]
+        lines += render(report.model, compare(report.incidents))
+        rules = "\n".join(lines)
+        (arguments.output_dir / f"{report_name(split)}-rules.md").write_text(
+            rules, encoding="utf-8"
+        )
+        print(rules)
     used = getattr(llm, "input_tokens", None), getattr(llm, "output_tokens", None)
     if used[0] is not None:
         # Only this run's calls: incidents resumed from the journal aren't counted.

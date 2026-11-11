@@ -86,6 +86,21 @@ def test_unsupported_constraints_are_dropped_but_enums_kept():
     assert schema["additionalProperties"] is False
 
 
+def test_a_field_named_like_a_keyword_is_kept():
+    # The explain path's reading has a field called "pattern"; only the regex
+    # keyword of that name is unsupported.
+    from flowguard.graph.nodes.explain import Explanation, Reading
+
+    reading = claude_schema(Reading.model_json_schema())
+    keyword = claude_schema({"type": "string", "pattern": "^E[0-9]+$"})
+
+    assert list(reading["properties"]) == reading["required"]
+    assert reading["properties"]["pattern"]["enum"] == ["sustained", "isolated"]
+    assert "pattern" not in keyword
+    explanation = claude_schema(Explanation.model_json_schema())
+    assert list(explanation["properties"]) == explanation["required"]
+
+
 def test_the_original_schema_is_not_changed():
     schema = proposal_schema(["LOG-1"])
 
