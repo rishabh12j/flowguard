@@ -19,6 +19,11 @@ category, or an unexplained one is an abstention; and the category may change
 after the second question only when a change explains the failure, and never to
 deployment_or_configuration, which the symptoms alone must show. Evidence gets
 neutral IDs, so a document's name can't hint at its family.
+
+Since 2026-11-11 the second answer also names the service where the cause lies,
+chosen from the services in the evidence, so FlowGuard can be scored on
+benchmarks that label a root-cause service, such as RCAEval. It is recorded, and
+decides nothing.
 """
 
 from collections.abc import Mapping, Sequence
@@ -74,9 +79,11 @@ EXPLAIN_SYSTEM = (
     f"started; {NO_CHANGE_NEEDED} if the symptoms themselves show why it failed without "
     f"any change, for example a limit that was reached; or {UNEXPLAINED} if nothing "
     "here explains it. A change that came before the failure explains it only if the "
-    "symptoms follow from what it changed. Then name the category of what failed: if "
-    "a change made something else go wrong, use the category of what went wrong, not "
-    "of the change. Cite the evidence by its ID. " + DATA + CATEGORIES
+    "symptoms follow from what it changed. Then name the service where the cause "
+    "lies: the one whose own fault, failure or broken release started the failure, "
+    "not one that only reports errors from calling it. Then name the category of what "
+    "failed: if a change made something else go wrong, use the category of what went "
+    "wrong, not of the change. Cite the evidence by its ID. " + DATA + CATEGORIES
 )
 
 
@@ -95,6 +102,7 @@ class Reading(Answer):
 class Explanation(Answer):
     explanation: str = Field(min_length=1)
     explained_by: str
+    service: str
     evidence_ids: tuple[str, ...]
     category: IncidentCategory
 
@@ -126,6 +134,16 @@ def evidence_prompt(incident: Incident, shown: Mapping[str, EvidenceItem]) -> st
         f"{incident.start_time.isoformat()} and {incident.end_time.isoformat()}:\n"
         f"{unfenced(incident.description)}\n\n<evidence>\n{items}\n</evidence>"
     )
+
+
+def services_in(shown: Mapping[str, EvidenceItem]) -> list[str]:
+    """The services the evidence names: those that logged, and the dependency maps'
+    nodes, so a service that went quiet can still be named."""
+    names = {item.source_name for item in shown.values() if item.source_type == "log"}
+    for item in shown.values():
+        if item.source_type == "dependency_map":
+            names.update(node["name"] for node in item.metadata.get("nodes", ()))
+    return sorted(names)
 
 
 def cite_only(schema: dict[str, Any], ids: list[str]) -> dict[str, Any]:
@@ -166,6 +184,7 @@ def explain_failure(
         NO_CHANGE_NEEDED,
         UNEXPLAINED,
     ]
+    schema["properties"]["service"]["enum"] = services_in(shown)
     text = unfenced(reading.failure).replace("<", "[").replace(">", "]")
     prompt = (
         f"<reading>\nWhat failed: {text}\nCategory: {reading.category}\n</reading>\n\n"
@@ -189,6 +208,9 @@ class Diagnosis:
     read_as: IncidentCategory | None = None
     abstention: str | None = None
     notes: tuple[str, ...] = field(default=())
+    # Where the second answer says the cause lies; None if it wasn't asked, or named
+    # a service the evidence doesn't.
+    service: str | None = None
 
 
 def diagnose(
@@ -210,7 +232,9 @@ def diagnose(
     cited = [symptoms[k] for k in dict.fromkeys(reading.evidence_ids)]
     supporting = [item.evidence_id for item in cited]
 
-    def abstain(reason: str, notes: tuple[str, ...] = ()) -> Diagnosis:
+    def abstain(
+        reason: str, notes: tuple[str, ...] = (), service: str | None = None
+    ) -> Diagnosis:
         return Diagnosis(
             "unknown",
             reading.failure,
@@ -218,6 +242,7 @@ def diagnose(
             reading.category,
             reason,
             notes,
+            service,
         )
 
     if not any(item.source_type == "log" for item in cited):
@@ -238,8 +263,13 @@ def diagnose(
     notes: tuple[str, ...] = (
         f"explained by: {shown[by].evidence_id if by in changes else by}",
     )
+    # Recorded only, so a service the evidence doesn't name is dropped rather than
+    # failing an answer that is otherwise sound.
+    service = explanation.service if explanation.service in services_in(shown) else None
+    if service is None:
+        notes += (f"named a service not in the evidence: {explanation.service}",)
     if explanation.explained_by == UNEXPLAINED:
-        return abstain("nothing in the evidence explains the failure", notes)
+        return abstain("nothing in the evidence explains the failure", notes, service)
     category: IncidentCategory = reading.category
     if explanation.explained_by in changes:
         supporting.append(shown[explanation.explained_by].evidence_id)
@@ -259,6 +289,7 @@ def diagnose(
         reading.category,
         None,
         notes,
+        service,
     )
 
 
@@ -287,6 +318,7 @@ def explained_root_cause(
         "decision_rule": "explain",
         "missing_sources": missing_sources,
         "errors": tuple(f"root_cause: {note}" for note in diagnosis.notes),
+        "root_cause_service": diagnosis.service,
     }
     hypothesis = None
     if diagnosis.supporting:

@@ -42,6 +42,8 @@ class InvestigationState(TypedDict, total=False):
     evidence_score: float
     missing_sources: int
     decision_rule: str
+    # Where the explain path's second answer says the cause lies. Recorded only.
+    root_cause_service: str | None
     status: InvestigationStatus
     proposed_actions: tuple[ProposedAction, ...]
     actions: tuple[PlannedAction, ...]

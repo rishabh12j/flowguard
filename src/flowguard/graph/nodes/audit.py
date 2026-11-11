@@ -61,6 +61,7 @@ def build_record(
         evidence_score=state.get("evidence_score"),
         missing_sources=state.get("missing_sources", 0),
         decision_rule=state.get("decision_rule"),
+        root_cause_service=state.get("root_cause_service"),
     )
 
 

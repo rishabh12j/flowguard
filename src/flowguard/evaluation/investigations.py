@@ -130,6 +130,8 @@ class IncidentResult(Model):
     # notes, such as which change the explain path said explains the failure.
     abstention: str | None = None
     errors: list[str] = []
+    # Since 2026-11-11: the service the explain path says holds the cause.
+    root_cause_service: str | None = None
 
 
 class AbstentionResult(Model):
@@ -333,6 +335,7 @@ def score_run(
         decision_rule=record.decision_rule,
         abstention=record.abstention,
         errors=list(record.errors),
+        root_cause_service=record.root_cause_service,
     )
 
 

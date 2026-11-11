@@ -81,6 +81,7 @@ class ScriptedLLM:
                 {
                     "explanation": "supplier-api 4.2.0 started sending camelCase fields.",
                     "explained_by": release,
+                    "service": "supplier-api",
                     "evidence_ids": errors,
                     "category": "schema_contract_mismatch",
                 }

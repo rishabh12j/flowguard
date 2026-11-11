@@ -70,3 +70,5 @@ class InvestigationRecord(BaseModel):
     evidence_score: float | None = Field(default=None, ge=0, le=1)
     missing_sources: int = Field(default=0, ge=0)
     decision_rule: str | None = None
+    # Since 2026-11-11: the service the explain path says holds the cause.
+    root_cause_service: str | None = None

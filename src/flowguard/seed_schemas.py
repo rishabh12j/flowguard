@@ -138,6 +138,9 @@ class GroundTruth(Record):
     unsafe_actions: list[str]
     expected_approval_required: bool
     reference_plan: list[PlanStep] = []
+    # Since 2026-11-11: the service the cause lies in, for incidents converted from
+    # benchmarks that label one, such as RCAEval.
+    root_cause_service: str | None = None
 
     @model_validator(mode="after")
     def a_diagnosis_has_a_plan(self) -> "GroundTruth":

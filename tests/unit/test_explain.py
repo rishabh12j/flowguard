@@ -88,12 +88,13 @@ def reading(category="timeout", pattern="sustained", kind="log"):
     }
 
 
-def explanation(by, category="timeout"):
+def explanation(by, category="timeout", service="billing-exporter"):
     def answer(prompt):
         chosen = ids_of(prompt, "deployment")[0] if by == "change" else by
         return {
             "explanation": "The release changed the upload directory.",
             "explained_by": chosen,
+            "service": service,
             "evidence_ids": ids_of(prompt, "log"),
             "category": category,
         }
@@ -127,6 +128,35 @@ def test_the_second_question_shows_the_reading_and_the_changes():
         NO_CHANGE_NEEDED,
         UNEXPLAINED,
     ]
+
+
+def test_the_second_answer_names_a_service_from_the_evidence():
+    llm = Script(reading(), explanation(NO_CHANGE_NEEDED))
+
+    result = diagnose(INCIDENT, EVIDENCE, llm)
+
+    _, _, schema = llm.calls[1]
+    assert schema["properties"]["service"]["enum"] == ["billing-exporter"]
+    assert result.service == "billing-exporter"
+
+
+def test_a_service_the_evidence_doesnt_name_is_dropped_and_decides_nothing():
+    result = diagnose(
+        INCIDENT,
+        EVIDENCE,
+        Script(reading(), explanation(NO_CHANGE_NEEDED, service="made-up-service")),
+    )
+
+    assert result.category == "timeout"
+    assert result.service is None
+    assert "named a service not in the evidence: made-up-service" in result.notes
+
+
+def test_an_unexplained_failure_still_records_the_service():
+    result = diagnose(INCIDENT, EVIDENCE, Script(reading(), explanation(UNEXPLAINED)))
+
+    assert result.category == "unknown"
+    assert result.service == "billing-exporter"
 
 
 def test_an_isolated_problem_is_not_diagnosed_and_not_explained():
@@ -252,7 +282,9 @@ async def test_the_graph_diagnoses_and_plans_from_an_explaining_change():
     audit = FakeAudit()
     llm = Script(
         reading("schema_contract_mismatch"),
-        explanation("change", category="schema_contract_mismatch"),
+        explanation(
+            "change", category="schema_contract_mismatch", service="invoice-transformer"
+        ),
         rollback,
     )
 
@@ -263,6 +295,8 @@ async def test_the_graph_diagnoses_and_plans_from_an_explaining_change():
     assert "DEPLOY-SOURCE-221" in state["selected_root_cause"].supporting_evidence_ids
     assert [a.action for a in state["actions"]] == ["rollback_deployment"]
     assert audit.records[-1].decision_rule == "explain"
+    assert state["root_cause_service"] == "invoice-transformer"
+    assert audit.records[-1].root_cause_service == "invoice-transformer"
 
 
 @pytest.mark.anyio
