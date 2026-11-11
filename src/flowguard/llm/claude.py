@@ -6,9 +6,11 @@ an API key in ANTHROPIC_API_KEY, which must never be written into the repo.
 """
 
 import copy
+import os
 from typing import Any, Literal
 
 import anthropic
+from anthropic.lib.credentials import default_credentials
 from anthropic.types import MessageParam, OutputConfigParam, ThinkingConfigParam
 
 from flowguard.llm.client import LLMError, ModelDeclined
@@ -55,6 +57,18 @@ def claude_schema(schema: dict[str, Any]) -> dict[str, Any]:
         return node
 
     return strip(copy.deepcopy(schema))  # type: ignore[no-any-return]
+
+
+def has_credentials() -> bool:
+    """Whether the SDK will find credentials: a key or token in this shell, or a
+    profile saved by `ant auth login`, which keeps any key out of the shell."""
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return True
+    try:
+        return default_credentials() is not None
+    except anthropic.AnthropicError:
+        # A broken or missing profile the user configured: no usable login.
+        return False
 
 
 class ClaudeLLM:

@@ -228,3 +228,4 @@
 - The evaluation runner now prints the tokens a Claude run used for the explain path too; it printed them only for the hypotheses path.
 - Fixed the Claude client dropping schema fields whose names match an unsupported keyword. The explain path's reading has a field called `pattern`, which was removed from the schema sent to Claude while still being required. Earlier Claude runs used only the hypotheses path, which has no such field.
 - Decided to run Claude Sonnet 5.5 once on the spent benchmark-2031 test set with the explain path, to compare a hosted model with local Gemma under the same code; nothing in FlowGuard changes because of it (brief, section 14).
+- A Claude run now also accepts a login made with `ant auth login`, which the Anthropic SDK reads from `%APPDATA%\Anthropic`, so no key has to be set in the shell. The runner still stops before starting when it finds no credentials.

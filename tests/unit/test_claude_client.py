@@ -129,11 +129,33 @@ def test_an_api_error_stops_an_evaluation():
         Watched(llm).generate("system", "prompt", {"type": "object"})
 
 
-def test_a_claude_run_without_a_key_stops_before_it_starts(monkeypatch):
+def without_credentials(monkeypatch, tmp_path):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    # An empty config folder, so a real `ant auth login` on this machine isn't found.
+    monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path))
+
+
+def test_a_claude_run_without_credentials_stops_before_it_starts(monkeypatch, tmp_path):
     from flowguard.evaluation.investigations import model_for
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    without_credentials(monkeypatch, tmp_path)
 
-    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(SystemExit, match="ant auth login"):
         model_for("claude-sonnet-5-5", "off")
+
+
+def test_a_key_in_the_shell_or_a_cli_login_is_enough(monkeypatch, tmp_path):
+    import flowguard.llm.claude as claude_module
+    from flowguard.llm.claude import has_credentials
+
+    without_credentials(monkeypatch, tmp_path)
+    assert not has_credentials()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    assert has_credentials()
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    # What the SDK finds after `ant auth login`: a profile on disk.
+    monkeypatch.setattr(claude_module, "default_credentials", lambda: object())
+    assert has_credentials()

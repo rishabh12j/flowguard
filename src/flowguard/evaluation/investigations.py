@@ -6,7 +6,6 @@ python -m flowguard.evaluation.investigations
 import argparse
 import asyncio
 import math
-import os
 import statistics
 import subprocess
 import time
@@ -866,17 +865,16 @@ def described(
 def model_for(name: str, think: str) -> LLM:
     """An Ollama model, or Claude for a name starting with claude-."""
     if name.startswith("claude-"):
-        # Without a key the SDK fails on the first call with an unclear TypeError.
-        if not (
-            os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        ):
-            raise SystemExit(
-                f"{name} needs ANTHROPIC_API_KEY set in this shell. Set it for the "
-                "session only; never write it into a file in the repo."
-            )
         # Imported here, so the anthropic package is only needed for Claude.
-        from flowguard.llm.claude import ClaudeLLM
+        from flowguard.llm.claude import ClaudeLLM, has_credentials
+
+        # Without credentials the SDK fails on the first call with an unclear error.
+        if not has_credentials():
+            raise SystemExit(
+                f"{name} needs Claude credentials: log in once with `ant auth "
+                "login`, or set ANTHROPIC_API_KEY in this shell for the session "
+                "only. Never write a key into a file in the repo."
+            )
 
         return ClaudeLLM(name, effort=None if think == "off" else think)  # type: ignore[arg-type]
     return OllamaLLM(name, think=False if think == "off" else think)  # type: ignore[arg-type]
