@@ -1,6 +1,6 @@
 # The next benchmark
 
-A plan, written on 2026-11-09, for the benchmark that gives FlowGuard's next honest number. Every earlier set is now spent or tuning data, and [What the benchmark makes easy](evaluation.md#what-the-benchmark-makes-easy) explains why a new seed of the old families isn't enough. The benchmark was generated on 2026-11-10 (see [Generated](#generated)). Gemma has run on the development folder only; the test folder waits for its one run, under terms fixed beforehand (see [Fixed before the test run](#fixed-before-the-test-run)).
+A plan, written on 2026-11-09, for the benchmark that gives FlowGuard's next honest number. Every earlier set is now spent or tuning data, and [What the benchmark makes easy](evaluation.md#what-the-benchmark-makes-easy) explains why a new seed of the old families isn't enough. The benchmark was generated on 2026-11-10 (see [Generated](#generated)). The test folder ran once on 2026-11-11, under terms fixed beforehand, and is now spent (see [Result](#result)).
 
 ## What it fixes
 
@@ -160,3 +160,7 @@ conda run --no-capture-output -n flowguard python -m flowguard.evaluation.invest
 
   If any fails, the rubric stays the default and the explain path stays off.
 - **Reported for both, whatever the outcome.** Diagnosis accuracy on the 240 with the Wilson interval and the interval counted by family, against the 80% target; abstention on the 60; wrong diagnoses; each by group and by precedent; plan recall, plan precision and change precision; unsafe actions, approval bypasses and latency. FlowGuard's accuracy is the default's, after the marks. The test set is then spent: never tuned on, never run again.
+
+## Result
+
+On 2026-11-11, from the tagged commit, the explain path diagnosed 206 of the 240 test incidents with a cause (86%) and abstained on 59 of the 60 without one; the rubric diagnosed 139 (58%) and abstained on all 60. Four marks passed; the precision mark was worded ambiguously, passing as the precision of the answers given and missing by 0.1 points read literally. The explain path became FlowGuard's default the same day. The details are in [`evaluation.md`](evaluation.md#benchmark-2031) and the brief, section 14.

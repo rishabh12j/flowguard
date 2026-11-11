@@ -531,6 +531,10 @@ Tune this rubric through evaluation rather than presenting it as universally cor
 
 > **Decided 2026-11-10, before the test run: its terms.** FlowGuard is frozen at the commit that adds this paragraph, tagged `benchmark-2031-frozen`; the runner refuses the test split with uncommitted code or data, and each report records its commit. Gemma runs the rubric and the explain path once each on the 300 test incidents. The explain path becomes the default only if all five marks hold: (1) at least 24 more right than the rubric on the 240 with a cause; (2) precision, right ÷ (right + wrong) over all 300, at least the rubric's; (3) an abstention on at least 54 of the 60 without a cause; (4) no more than 9 fewer right than the rubric on the 180 with a change; (5) in both runs, 0 unsafe actions, 0 approval bypasses, and an abstention on every incident when logs are denied. Otherwise the rubric stays the default. Both are reported in full either way, by group and by precedent (`docs/next-benchmark.md`, "Fixed before the test run"), and the test set is then spent.
 
+> **Result 2026-11-11: the test run.** Both runs came from the tagged commit `0665d4e` (`reports/benchmark-2031-test-rubric`, `reports/benchmark-2031-test-explain`). On the 240 incidents with a cause, the explain path was right on 206 (86%; 81% to 90%, 70% to 94% by family), wrong on 30 and abstained on 4; the rubric was right on 139 (58%), wrong on 23 and abstained on 78, including all 60 where nothing changed. On the 60 without a cause, the explain path abstained on 59 and the rubric on 60. Marks 1, 3, 4 and 5 passed (206 right against 163 needed; 59 abstentions against 54; 161 right where a change came first against at least 130; no unsafe action or bypass, and every incident abstained without logs, in both runs). Mark 2 was worded ambiguously. As the precision of the answers given, 206 of 237 (86.9%) against 139 of 162 (85.8%), it passes. Literally, with the scoring rule's "right" that includes abstentions on incidents without a cause, 265 of 296 (89.53%) against 199 of 222 (89.64%), it fails by 0.1 points. 29 of the explain path's 31 wrong answers were in four families where Gemma named the failure by its surface symptom (truncated_upload, poison_message, filename_pattern_changed, receiver_stopped_polling); 19 of the rubric's 23 blamed the release (`docs/evaluation.md`, "Benchmark-2031").
+
+> **Decided 2026-11-11:** the explain path is FlowGuard's default way to diagnose (`Dependencies.diagnosis`, so the API and the demo use it, and the evaluation runner's `--diagnosis`). The user decided after seeing the result, reading mark 2 as the precision of the answers given, so the switch rests on that reading chosen afterwards as well as on the marks fixed before. The rubric's hypotheses path stays, as `--diagnosis hypotheses`, to compare against; the benchmark checker's oracle still answers its questions. The test folder of `data/benchmark-2031` is spent. Further work on the explain path is developed on new development families, never on the four test families it missed.
+
 ---
 
 ## 15. MCP design
@@ -1331,15 +1335,16 @@ Resolve these only when they become necessary:
 
 ## 32. Current next action
 
-**Updated 2026-11-10.** The vertical slice this section first described is built, and FlowGuard has been measured on 305 + 330 generated incidents. The `evidence` rule failed its confirmation on `data/benchmark-2030`, so the rubric stays the default. Every existing set is now spent or tuning data, and the analysis in `docs/evaluation.md` ("What the benchmark makes easy") found that the old benchmark gives some answers away. Asking Gemma for three hypotheses failed its check on `data/benchmark-2028` and was reverted (section 14). A probe of a different decision, asking only what failed from the symptoms, failed its check too (section 14). The next honest number comes from a new benchmark, planned in [`docs/next-benchmark.md`](docs/next-benchmark.md) and generated on 2026-11-10 in `data/benchmark-2031` (50 development incidents, 300 test incidents):
+**Updated 2026-11-11.** FlowGuard has a new honest number. On the 300 test incidents of `data/benchmark-2031`, run once from a frozen commit, the explain path diagnosed 206 of the 240 with a cause (86%; 70% to 94% counting families) and abstained on 59 of the 60 without one, against the rubric's 139 and 60 (section 14). Since 2026-11-11 it's FlowGuard's default, and the rubric stays available to compare against. Every existing test set is now spent. Next, as proposed on 2026-11-11:
 
 ```
-develop on the 50: let Gemma use a change to explain the symptoms,
-so causes with no preceding change can be diagnosed            (done)
+work on the explain path with new development families: failures
+whose surface symptom points to the wrong category, and plans that
+propose fixes nobody needed
         ↓
-freeze FlowGuard and record the test run's terms in section 14 (done)
+fix the next test run's terms here, with a fresh test set
         ↓
-run the 300 once with Gemma and report the result as it is
+run it once and report the result as it is
 ```
 
-Nothing is tuned on the spent sets (the held-out incidents, the test split, `data/benchmark-2029`, `data/benchmark-2030`), and nothing runs on a test family before the final run.
+Nothing is tuned on the spent sets (the held-out incidents, the test split, `data/benchmark-2029`, `data/benchmark-2030`, and the test folder of `data/benchmark-2031`), and nothing runs on a test family before its final run.

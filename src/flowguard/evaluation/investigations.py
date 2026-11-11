@@ -500,7 +500,7 @@ class Decider:
     rule: Rule = "rubric"
     fit: FitScorer | None = None
     check: bool = False
-    diagnosis: Literal["hypotheses", "explain"] = "hypotheses"
+    diagnosis: Literal["hypotheses", "explain"] = "explain"
 
 
 DEFAULT_DECIDER = Decider()
@@ -847,14 +847,15 @@ def incidents_in(split: Split, data_dir: Path = DATA_DIR) -> list[str]:
 
 
 def described(
-    model: str, think: str, rule: str, check: bool, diagnosis: str = "hypotheses"
+    model: str, think: str, rule: str, check: bool, diagnosis: str = "explain"
 ) -> str:
     """The report's model line: the model, and every setting that changes answers."""
     parts = [model]
     if think != "off":
         parts.append(f"reasoning {think}")
-    if diagnosis != "hypotheses":
-        parts.append(f"diagnosis {diagnosis}")
+    # Always named: the default changed on 2026-11-11, and reports from before it
+    # that name no diagnosis used hypotheses.
+    parts.append(f"diagnosis {diagnosis}")
     if rule != "rubric":
         parts.append(f"rule {rule}")
     if check:
@@ -967,9 +968,10 @@ def main() -> None:
     parser.add_argument(
         "--diagnosis",
         choices=["hypotheses", "explain"],
-        default="hypotheses",
-        help="explain reads the symptoms, then asks which change explains them; "
-        "--rule and --check don't apply to it",
+        default="explain",
+        help="explain, the default, reads the symptoms, then asks which change "
+        "explains them; hypotheses is the earlier way, scored by --rule, and the "
+        "only one --rule and --check apply to",
     )
     arguments = parser.parse_args()
     split: Split = "held_out" if arguments.held_out else arguments.split

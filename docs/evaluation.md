@@ -315,6 +315,33 @@ Partway through the run, after 136 incidents, the score was 108 of 124 (87%, 80%
 
 The order was shuffled and nothing changed during the run, so this is most likely chance. It also shows how much a score depends on which families' variants happen to be included.
 
+## Benchmark-2031
+
+On 2026-11-11, FlowGuard ran once on the 300 test incidents of `data/benchmark-2031`, a new benchmark built to remove what the first one gave away ([`next-benchmark.md`](next-benchmark.md)): numbered document IDs, precedent in only half the families, causes with nothing changed before them, and a harmless change in half of the no-cause incidents. Its 30 test families were never used in development. Gemma ran it twice from the commit tagged `benchmark-2031-frozen`: with the rubric, FlowGuard's default until then, and with the explain path. The terms and five marks were fixed and committed beforehand (brief, section 14).
+
+| | Explain path | Rubric |
+|---|---|---|
+| Right, of 240 with a cause | 206, 86% (81% to 90%; by family 70% to 94%) | 139, 58% (52% to 64%; by family 41% to 73%) |
+| A change before the cause (180) | 161 right, 17 wrong, 2 abstained | 139 right, 23 wrong, 18 abstained |
+| A cause with nothing changed (60) | 45 right, 13 wrong, 2 abstained | 60 abstained |
+| No cause (60) | 59 abstained, 1 wrong | 60 abstained |
+| Right ÷ (right + wrong), answers only | 206 of 237, 86.9% | 139 of 162, 85.8% |
+| Unsafe actions, approval bypasses | 0, 0 | 0, 0 |
+| Abstained without logs | 300 of 300 | 300 of 300 |
+| Plan recall, plan precision, change precision | 67%, 56%, 70% | 54%, 61%, 83% |
+| Unneeded fixes; unsafe proposals blocked by validation | 39; 79 | 18; 37 |
+| Median and p95 time | 48 s, 68 s | 39 s, 68 s |
+
+**The marks.** Four passed clearly: 206 right against the 163 needed; 59 of 60 abstentions against 54; 161 right where a change came first, against at least 130; and, in both runs, no unsafe action, no bypass, and an abstention on every incident without logs. The second, precision, was worded "right ÷ (right + wrong) over all 300", while the scoring rule beside it counts an abstention on an incident without a cause as right. Read as the share of answers that were right, which is how it was explained before the explain path's result was known, it passes (86.9% against 85.8%). Read literally, it fails by 0.1 points (265 of 296, 89.53%, against 199 of 222, 89.64%): adding the same 60 easy abstentions to both favours the method that answers less. On 2026-11-11, after seeing this, the user made the explain path the default, reading the mark as the precision of the answers given. The record says so because the reading was chosen after the result.
+
+**Where each went wrong.** 19 of the rubric's 23 wrong answers named `deployment_or_configuration`, the release that triggered a different failure. The explain path fixed most of those: token_audience_changed went from 4 to 10 right, ordering_broken_by_concurrency from 3 to 8, proxy_setting_added from 6 to 10 and shared_key_new_consumer from 0 to 10. 29 of the explain path's 31 wrong answers came from four families, where Gemma named the failure by its surface symptom: truncated_upload read as a timeout (10 of 10, where the rubric got 6 right), poison_message as a schema mismatch (10 of 10), filename_pattern_changed as a schema or data problem (6, where the rubric got all 10), and receiver_stopped_polling as a queue problem (3). The other two were an ordering_broken_by_concurrency incident read as data quality, and a sporadic_partner_502s incident, which has no cause, diagnosed as networking.
+
+**How the explain path decided.** Results now record it. All 59 right abstentions on incidents without a cause came from the first question, Gemma judging the problem isolated. The second question never changed a category. Where a change came first, it named the explaining change 154 times (139 right) and said no change was needed 24 times; where nothing changed, it said no change was needed 58 times (45 right); and 3 times it found nothing that explains the failure, an abstention. Precedent made little difference where a change came first: 82 of 90 right with a runbook and a past incident, 79 of 90 without.
+
+**What it costs.** It answers more, so its plans propose more fixes the reference doesn't have (39 unneeded, against 18), and validation blocked more unsafe proposals (79 against 37). None reached a plan, and every state-changing plan waited for approval. Its confidence is the rubric's score of what it cites, kept for the record and not used to decide (AUROC 0.69). It takes about 9 s more per investigation.
+
+**Limits of this number.** The families, their labels and FlowGuard were written by one person, who also wrote the explain path's prompts beside the development families. 30 families is a small sample of kinds of failure, and counted by family the interval is 70% to 94%. The test folder is now spent: the four families above can't be used to tune the explain path. Reports: `reports/benchmark-2031-test-explain` and `reports/benchmark-2031-test-rubric`.
+
 ## Limits
 
 - **The 5/5 is partly tuning.** Changes 2 and 3 were written after seeing these incidents fail. The number shows the fixes work on these cases. The held-out 3/3 is the better measure of diagnosis, though it's three incidents, written by the same person who wrote the prompt.

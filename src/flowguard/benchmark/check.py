@@ -34,7 +34,7 @@ from flowguard.domain.incidents import Incident
 from flowguard.domain.redaction import redact_evidence
 from flowguard.domain.remediation import ProposedAction
 from flowguard.domain.validation import check_actions
-from flowguard.evaluation.investigations import run_incident
+from flowguard.evaluation.investigations import Decider, run_incident
 from flowguard.evaluation.oracle import Oracle
 from flowguard.graph.nodes.root_cause import MIN_CONFIDENCE
 from flowguard.rag.embedding import SentenceTransformerEmbedder
@@ -166,8 +166,15 @@ async def check(data_dir: Path) -> list[str]:
     for number, incident_id in enumerate(incidents, start=1):
         truth = truths[incident_id]
         oracle = MeasuredOracle(truth)
+        # The oracle answers the hypotheses questions from the ground truth: this
+        # checks the data, not how FlowGuard decides.
         record, _ = await run_incident(
-            incident_id, oracle, search, data_dir=data_dir, evidence=evidence
+            incident_id,
+            oracle,
+            search,
+            data_dir=data_dir,
+            evidence=evidence,
+            decider=Decider(diagnosis="hypotheses"),
         )
         largest = max(largest, oracle.largest)
         if oracle.largest > MAX_PROMPT_CHARACTERS:

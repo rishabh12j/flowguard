@@ -10,6 +10,7 @@ import pytest
 
 from flowguard.dataset import incident_ids, load_ground_truth
 from flowguard.evaluation.investigations import (
+    Decider,
     ModelUnavailable,
     evaluate,
     render_markdown,
@@ -18,6 +19,9 @@ from flowguard.evaluation.investigations import (
 from flowguard.evaluation.oracle import Oracle
 from flowguard.llm.client import LLMError
 from flowguard.rag.retrieval import retrieve
+
+# The oracle answers the hypotheses questions from the ground truth.
+HYPOTHESES = Decider(diagnosis="hypotheses")
 
 pytestmark = pytest.mark.anyio
 
@@ -34,6 +38,7 @@ async def report(client, embedder):
         partial(retrieve, embedder=embedder, client=client),
         incident_ids(),
         "oracle",
+        decider=HYPOTHESES,
     )
 
 
@@ -87,10 +92,16 @@ async def test_an_interrupted_run_resumes_from_its_journal(client, embedder, tmp
         incidents,
         "oracle",
         journal=journal,
+        decider=HYPOTHESES,
     )
 
     resumed = await evaluate(
-        lambda incident_id: Unreachable(), search, incidents, "oracle", journal=journal
+        lambda incident_id: Unreachable(),
+        search,
+        incidents,
+        "oracle",
+        journal=journal,
+        decider=HYPOTHESES,
     )
 
     assert len(journal.read_text(encoding="utf-8").splitlines()) == 2
@@ -119,7 +130,12 @@ async def test_a_model_outage_stops_the_run_instead_of_being_scored(
 
     with pytest.raises(ModelUnavailable, match="could not reach Ollama"):
         await evaluate(
-            failing_on_the_second, search, incidents, "oracle", journal=journal
+            failing_on_the_second,
+            search,
+            incidents,
+            "oracle",
+            journal=journal,
+            decider=HYPOTHESES,
         )
     # The outage wasn't journaled as an abstention, so a resume retries it.
     assert len(journal.read_text(encoding="utf-8").splitlines()) == 1
@@ -130,6 +146,7 @@ async def test_a_model_outage_stops_the_run_instead_of_being_scored(
         incidents,
         "oracle",
         journal=journal,
+        decider=HYPOTHESES,
     )
     assert [result.status for result in resumed.incidents] == [
         "awaiting_approval",

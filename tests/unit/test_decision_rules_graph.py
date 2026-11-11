@@ -29,7 +29,12 @@ async def run(llm, audit=None, **settings):
     return await investigate(
         new_graph(),
         REQUEST,
-        Dependencies(tools=tools, llm=llm, audit=audit or FakeAudit(), **settings),
+        Dependencies(
+            tools=tools,
+            llm=llm,
+            audit=audit or FakeAudit(),
+            **{"diagnosis": "hypotheses", **settings},
+        ),
         investigation_id="INVEST-1",
     )
 

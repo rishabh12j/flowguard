@@ -34,8 +34,12 @@ async def solved(request, client, embedder):
     truth = load_ground_truth(request.param)
     search = partial(retrieve, embedder=embedder, client=client)
     async with open_evidence_tools(search) as tools:
+        # The oracle answers the hypotheses questions.
         dependencies = Dependencies(
-            tools=tools, llm=Oracle(truth), audit=SqliteAuditStore()
+            tools=tools,
+            llm=Oracle(truth),
+            audit=SqliteAuditStore(),
+            diagnosis="hypotheses",
         )
         state = await investigate(
             build_graph(InMemorySaver(serde=SERIALIZER)),

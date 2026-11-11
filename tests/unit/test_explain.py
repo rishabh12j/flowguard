@@ -272,3 +272,13 @@ async def test_the_graph_abstains_on_an_isolated_problem():
     assert state["category"] == "unknown"
     assert state["status"] == "abstained"
     assert "isolated" in state["abstention"]
+
+
+def test_the_explain_path_is_the_default():
+    # Chosen on 2026-11-11 after the benchmark-2031 test run (brief, section 14).
+    assert (
+        Dependencies(
+            tools=full_tools(), llm=Script(reading()), audit=FakeAudit()
+        ).diagnosis
+        == "explain"
+    )

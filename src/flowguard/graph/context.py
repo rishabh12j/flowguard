@@ -58,14 +58,14 @@ class Dependencies:
     tools: EvidenceTools
     llm: LLM
     audit: AuditStore
-    # Which rule chooses the root cause. The rubric stays the default until
-    # another rule passes its check on fresh incidents.
+    # Which rule chooses among hypotheses, when diagnosis is "hypotheses".
     rule: Rule = "rubric"
     # Scores how well the error logs fit each category; without it, no fit is recorded.
     fit: FitScorer | None = None
     # A second model call that judges each hypothesis. Off by default: it adds a call.
     check: bool = False
-    # How the root cause is found: hypotheses scored by the rule above, or, being
-    # developed on data/benchmark-2031/dev, reading the symptoms and asking which
-    # change explains them (graph/nodes/explain.py).
-    diagnosis: Literal["hypotheses", "explain"] = "hypotheses"
+    # How the root cause is found. The default since 2026-11-11, after the
+    # benchmark-2031 test run (brief, section 14): read the symptoms, then ask which
+    # change explains them (graph/nodes/explain.py). "hypotheses" is the earlier
+    # way, hypotheses scored by the rule above, kept to compare against.
+    diagnosis: Literal["hypotheses", "explain"] = "explain"

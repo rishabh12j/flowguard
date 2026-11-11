@@ -218,10 +218,13 @@ def dependencies(retriever=None, tools=None, llm=None, audit=None) -> Dependenci
     tools = tools or FakeTools()
     if retriever is not None and isinstance(tools, FakeTools):
         tools.retriever = retriever
+    # These tests script the hypotheses questions; the explain path, the default,
+    # has its own in test_explain.py.
     return Dependencies(
         tools=tools,
         llm=llm or FakeLLM(proposal("LOG-882")),
         audit=audit or FakeAudit(),
+        diagnosis="hypotheses",
     )
 
 

@@ -1,4 +1,5 @@
 import json
+import re
 from contextlib import nullcontext
 from functools import partial
 
@@ -43,12 +44,47 @@ INC_001_PLAN = [
 ]
 
 
+def shown(prompt: str) -> list[tuple[str, str]]:
+    """The explain path's evidence: each neutral ID with what it shows."""
+    return re.findall(
+        r"ID: (E\d+)\n(.*?)(?=\n\nID: E\d+\n|\n</evidence>)", prompt, re.S
+    )
+
+
 class ScriptedLLM:
-    """Proposes INC-001's root cause, then the runbook's plan to fix it."""
+    """Diagnoses INC-001, then proposes the runbook's plan to fix it. It answers
+    the explain path's two questions and the hypotheses question."""
 
     def generate(self, system: str, prompt: str, schema: dict) -> str:
-        if "actions" in schema["properties"]:
+        fields = schema["properties"]
+        if "actions" in fields:
             return json.dumps({"actions": INC_001_PLAN})
+        errors = [
+            key for key, body in shown(prompt) if body.startswith("Type: log (ERROR)")
+        ]
+        if "pattern" in fields:
+            return json.dumps(
+                {
+                    "failure": "Invoices are rejected: required fields are missing.",
+                    "evidence_ids": errors,
+                    "pattern": "sustained",
+                    "category": "schema_contract_mismatch",
+                }
+            )
+        if "explained_by" in fields:
+            release = next(
+                key
+                for key, body in shown(prompt)
+                if body.startswith("Type: deployment") and "camelCase" in body
+            )
+            return json.dumps(
+                {
+                    "explanation": "supplier-api 4.2.0 started sending camelCase fields.",
+                    "explained_by": release,
+                    "evidence_ids": errors,
+                    "category": "schema_contract_mismatch",
+                }
+            )
         hypothesis = {
             "description": "supplier-api 4.2.0 started sending camelCase fields.",
             "supporting_evidence_ids": ["LOG-882", "DEPLOY-SOURCE-221"],
@@ -73,7 +109,10 @@ def store():
 async def state(client, embedder, store):
     search = partial(retrieve, embedder=embedder, client=client)
     async with open_evidence_tools(search) as tools:
-        dependencies = Dependencies(tools=tools, llm=ScriptedLLM(), audit=store)
+        # The script answers the hypotheses questions.
+        dependencies = Dependencies(
+            tools=tools, llm=ScriptedLLM(), audit=store, diagnosis="hypotheses"
+        )
         return await investigate(
             build_graph(InMemorySaver(serde=SERIALIZER)),
             load_incident("INC-001"),
@@ -172,6 +211,8 @@ def test_inc_001_is_diagnosed_through_the_api(client, embedder):
     assert first.status_code == 201
     assert first.json()["status"] == "awaiting_approval"
     assert first.json()["category"] == "schema_contract_mismatch"
+    # The API uses the default, the explain path.
+    assert first.json()["decision_rule"] == "explain"
 
     # Each investigation has its own tool guard and history.
     def calls(response):
