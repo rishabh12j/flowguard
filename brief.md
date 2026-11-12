@@ -1,6 +1,6 @@
 # FlowGuard — Agentic Integration Incident Copilot
 
-> **Project status:** Planning / MVP not yet implemented
+> **Project status:** Restarted 2026-11-12 against OpenRCA 2.0; section 33 is the current plan
 > **Primary stack:** Python · LangGraph · MCP · RAG · FastAPI · Docker
 > **Core principle:** **The model investigates and proposes; deterministic controls validate and authorise.**
 
@@ -552,6 +552,12 @@ Tune this rubric through evaluation rather than presenting it as universally cor
 > **Result 2026-11-12: Sock Shop again, with signals.** Both runs used the working tree on top of commit `565ef66`, before it was committed, which a development run allows. Sonnet named the faulty service in 21 of 30, 6 diagnosed and 15 located, named no wrong one, and abstained on 9 (`reports/rcaeval-re3-dev-signals-sonnet`); before signals it was 3 right, 5 wrong and 22 abstentions. All 9 abstentions read the failure as isolated: all 7 cases of incorrect return values and 2 of a missing function call. In the three of them checked against the raw logs, the errors burst for one to three minutes while the service was redeployed and then stopped or faded; the bug itself logs nothing. The rule that an isolated problem isn't diagnosed stays: it is what declines incidents with no cause, and loosening it to catch a redeploy burst would fit RE3's giveaway. Gemma named the faulty service in 18, all diagnosed and none located, since it never answers that nothing explains a failure; named a wrong one in 6, five of them orders where carts was at fault; and abstained on 6 (`reports/rcaeval-re3-dev-signals-gemma`); before signals it was 7 right and 23 wrong. Four of Gemma's abstentions were a defect: it repeated the list of evidence IDs until its answer was cut off. The schema now allows no more citations than there are IDs; Claude's client drops that keyword, so Sonnet's run is unaffected. Retried outside the runner, all four cases answered and named the right service; Gemma's run is repeated with the fix for the record. The deepest-candidate baseline, with no model, is right in 25 of 30, above both models: Sonnet was right on all 5 cases the baseline misses, and the baseline is right on all 9 that Sonnet declined, which are the redeploy bursts.
 
 > **Frozen 2026-11-12, before the test systems were converted.** Gemma's repeat run with the citation limit named the faulty service in 22 of 30, a wrong one in 6, and abstained on 2 (`reports/rcaeval-re3-dev-signals-gemma-2`); only the four cut-off cases changed, and all four are now right. So on Sock Shop, with signals: Gemma 22 right and 6 wrong, Sonnet 21 right and 0 wrong, the deepest-candidate baseline 25. The rules, the connector and the scorer are frozen as they stand. Online Boutique and Train Ticket were converted after this was written, with `--split test`, and each model runs them once under the terms above. One defect was fixed to convert them: Train Ticket's download holds a stray `.DS_Store` file, which the converter took for a case and refused; it now reads only folders. Checked before any run, without reading a label or an answer: every case fits Gemma's context, the largest second question being 7,348 of its 8,192 tokens, in Train Ticket, which leaves less room for the answer than Sock Shop's largest did (6,323); and one Train Ticket case has no service with a new or increased error, so FlowGuard will decline it without asking a model. Both are left as they are. The converted data is outside git, so the logs each run reads are identified by the first 16 hex digits of their SHA-256: Online Boutique `7d9361b283588ef9`, Train Ticket `e42d2ae8496ded74`.
+
+> **Result 2026-11-12: the test failed; the layer did not carry over.** Each model ran the 60 test cases once from commit `c591cb7`. Gemma and Sonnet each named the faulty service in 33 of 60 (55%, 42% to 67%): 21 of 30 on Online Boutique and 12 of 30 on Train Ticket. They were the same 33 cases, so the paired test between the models has no case to count (p = 1). Gemma named a wrong service in 26 and abstained on 1; Sonnet named a wrong one in 21 and abstained on 6. Gemma gave a diagnosed cause in all 33 of its right answers; Sonnet diagnosed 7 and located 26. The baselines, over both systems: the deepest candidate 10 of 60 (17%), the first error's service 21 (35%), always the commonest faulty service 30 (50%). On Sock Shop the same code had named 22 of 30 (Gemma) and 21 (Sonnet), and the deepest-candidate baseline 25. On Train Ticket, 40% equals the first-error baseline and is below the commonest-service one.
+>
+> The cause is the candidate rule, not either model. The faulty service showed a new or increased error or warning in 33 of the 60 cases, and both models named it in all 33, even where it was eleventh of 15 candidates. In the other 27 it was not a candidate, and the rules allowed no other name. In 23 of those its only new lines were INFO lines from its restart; in 4 none of its lines were kept in the case. All 15 `ts-auth-service` cases and all 3 `currencyservice` cases were missed, with 6 of 15 `emailservice` and 3 of 15 `ts-route-service` cases.
+>
+> Three mistakes, recorded so they aren't repeated. A rule checked on one system was made a hard limit on the answer. It was frozen on the evidence of Sock Shop alone, where the faulty service was a candidate in 30 of 30 cases, although Sock Shop's wrong-return-value cases had already shown a fault that logs nothing. And FlowGuard read a digest of the logs only, though every case also holds metrics and traces. Online Boutique and Train Ticket are spent: nothing is tuned on them or rerun. The reports are `reports/rcaeval-re3-test-ob-gemma`, `-ob-sonnet`, `-tt-gemma` and `-tt-sonnet`. After this result the project changed direction (section 33).
 
 ---
 
@@ -1367,4 +1373,61 @@ run it once and report the result as it is
 
 **Added 2026-11-12.** A check on real logs comes first: RCAEval RE3, whose logs FlowGuard's author didn't write (section 14). On its development system, Sock Shop, both models did worse than guessing, so code now works out what changed in the logs and each setup states what it records. Next: one development run of each model on Sock Shop with that code, then the 60 test cases of Online Boutique and Train Ticket, converted and run once each.
 
-Nothing is tuned on the spent sets (the held-out incidents, the test split, `data/benchmark-2029`, `data/benchmark-2030`, and the test folder of `data/benchmark-2031`), and nothing runs on a test family before its final run.
+Nothing is tuned on the spent sets (the held-out incidents, the test split, `data/benchmark-2029`, `data/benchmark-2030`, the test folder of `data/benchmark-2031`, and the RE3 cases of Online Boutique and Train Ticket), and nothing runs on a test family before its final run.
+
+**Added 2026-11-12, after the RE3 test.** The test failed: both models named the faulty service in 33 of the 60 test cases, against 22 and 21 of 30 on Sock Shop (section 14). The user then restated the project's one objective, a tool that finds what caused a real incident, and chose to start again from the ground up against OpenRCA 2.0. Section 33 holds that plan and replaces the next action above. The work described in sections 1 to 32 stays in the repository as it is; what is kept from it is decided in phase 4 of the new plan.
+
+
+---
+
+## 33. New direction, 2026-11-12: find the root cause on OpenRCA 2.0
+
+**The objective, as the user restated it on 2026-11-12:** a tool that finds what caused a real incident. The comparison of a local model with a hosted one was never the question, and results on incidents written for this project don't show the tool works. The RE3 test (section 14) was the only check on data this project didn't write, and it failed.
+
+**The decision.** Start again from the ground up as an agentic system: a main agent that plans an investigation and sends questions to subagents, with code that scans the telemetry and checks what the agents claim. The target is OpenRCA 2.0. No design is chosen before the data and the task have been studied (phase 4 below).
+
+**What changes in the rules.** "Code decides; the model's output is only an input" becomes "the model investigates; code checks". Tools stay read-only. The discipline on test data stays, and is stricter (below). Any open-source model may be used; which one is decided by measurement in phase 3. The laptop has 8 GB of GPU memory and 16 GB of RAM, so a model too large for it would have to run on a hosted provider, at a cost approved before the run.
+
+### What is known about the benchmark
+
+- OpenRCA 2.0 (arXiv 2606.27154) is a set of recorded fault injections on three microservice systems. An agent sees only the telemetry and must name the root-cause services with the kind of fault, and the path the fault travelled.
+- The set on the official leaderboard is `anon-ops/ops-lite` on Hugging Face: 455 cases, 176 of them with more than one fault. TrainTicket has 275 cases, Hotel Reservation 148 and OTel Demo 32. It is 2.87 GB, under Apache-2.0. The commit used here is `581eba39d0bfd2d397eded6cd7cbe3303255521a`.
+- Each case holds ten telemetry tables as parquet files (traces, three kinds of metrics, and logs, each for a normal period and the abnormal period) and four answer files: `env.json`, `injection.json`, `label.json` and `causal_graph.json`. The answers ship with the download, and there is one split.
+- The leaderboard's rows are one agent, DeepResearch, with different models. That agent is a single model in a loop with four tools: list the tables, read a table's layout, run an SQL query, and a note-to-self tool. About 50 tool calls a case are recommended and 100 is the cap. It has no subagents and is given no dependency map. On 2026-11-12 the best row was Claude Opus 5 at 46.40% accuracy and 61.37% F1; Claude Sonnet 5 had 27.20% and 43.20%.
+- The paper names four ways that agent fails: it stops at the first plausible cause and misses faults that occur together; it reads silence from a killed service as normal; it fixates on the loudest signal, which is often a downstream effect; and it names the right service without a verified path to the symptom (76.0% against 61.5%).
+- No published system that beats the standard agent on 2.0 was found on 2026-11-12. On OpenRCA 1.0, a structured multi-agent pipeline (arXiv 2607.13548) raised the baseline agent's score most where it was given hand-written domain knowledge (Telecom 29.4% to 56.9%; 35.3% without it), and that knowledge was written against labelled cases. Two other multi-agent systems scored under 3%. So a multi-agent design alone promises nothing.
+- Not yet confirmed: the leaderboard's column definitions ("acc", "all-hit", "type-acc"), and whether the official scoring code and agent code are public. Phase 1 settles both.
+
+### The phases
+
+Each phase ends with something to read before the next begins.
+
+| Phase | Question it answers | What comes out | Model cost |
+|---|---|---|---|
+| 0. Set the rules | What may be looked at? | Data downloaded and checksummed; the held-out split made before any look | None |
+| 1. Read the task | What exactly is asked, and how is it scored? | A one-page task sheet | None |
+| 2. Study the data | What does each fault look like, and is the answer visible? | Fault kind against signal; the reachable ceiling | None |
+| 3. Measure the baseline | What does the standard agent cost, and where does it fail? | Cost per case; a classified list of failures | Small, approved first |
+| 4. Decide the design | What should code do, and what should agents do? | The design, its trade-offs and the bars, written here | None |
+| 5. Build | Does each part earn its place? | Each part measured on the development cases | Approved per run |
+| 6. Test once | Did it beat the baseline? | One held-out run, reported as it comes out | Approved first |
+
+- **Phase 0.** About 100 cases are kept for development, drawn at random within each system, and the rest are held out. The split is made by code that prints counts only. The held-out cases' answer files are moved out of the case folders before anything is read.
+- **Phase 1.** If the official scorer is not public, scoring follows the paper's definitions, and no official number is claimed before a submission.
+- **Phase 2.** The step that was skipped on RE3. For each simple signal, how often does it put the faulty service first or in the top three, and is the second fault of a multi-fault case visible at all? Development cases only.
+- **Phase 3.** About ten development cases with the standard agent on one affordable model, and once on a local model, to learn the cost and whether a local model has a role.
+- **Phase 5.** The main agent alone is compared with the main agent and its subagents, so what the subagents buy is known.
+
+### Rules throughout
+
+- Agents and their tools can open only the ten telemetry tables of a case, and this is enforced in code. Case folder names are not shown to an agent if they reveal the fault.
+- The held-out cases are not read, summarised or run before the one test run. Nothing is tuned on them afterwards.
+- A heuristic is a hint to the agents, never a limit on their answer.
+- Nothing is fixed on the evidence of one system.
+- Every paid run has its cost approved first.
+
+### Known limits of this target
+
+- The faults are injected on demonstration systems. They are infrastructure and code faults, not the integration failures of sections 1 to 8 (an expired credential, a schema mismatch, a partner's change), and the benchmark has no runbooks, specifications or change records. Beating it would show the investigation works on telemetry this project didn't write; it would not show the integration-specific parts.
+- The remediation plan and the approval gate are not scored there.
+- TrainTicket is also the application behind the spent RE3 Train Ticket cases. The testbed, the faults and the telemetry differ, and no RE3 finding is carried into this work as a rule.

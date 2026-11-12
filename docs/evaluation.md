@@ -444,3 +444,21 @@ The converter is a connector: it groups each service's messages into patterns an
 The scorer counts how often FlowGuard names the faulty service, diagnosed or located, beside three baselines that use no model: the one candidate that depends on no other, the commonest faulty service, and the first error's service.
 
 The first Sock Shop runs, before signals, are in `reports/rcaeval-re3-dev-gemma` (7 of 30 right, 23 wrong) and `reports/rcaeval-re3-dev-sonnet` (3 right, 5 wrong, 22 abstentions).
+
+### The test, run once on 2026-11-12
+
+Online Boutique and Train Ticket were converted with `--split test` and each model ran them once from commit `c591cb7`.
+
+| 60 test cases | Gemma | Sonnet |
+|---|---|---|
+| Named the right service | 33 (55%) | 33 (55%) |
+| - Online Boutique | 21 of 30 | 21 of 30 |
+| - Train Ticket | 12 of 30 | 12 of 30 |
+| - with a diagnosed cause | 33 | 7 |
+| - located, cause unexplained | 0 | 26 |
+| Named a wrong service | 26 | 21 |
+| Abstained | 1 | 6 |
+
+The baselines over both systems: the deepest candidate 17%, the first error's service 35%, always the commonest faulty service 50%.
+
+The result is a failure to carry over from Sock Shop, where the same code named 22 and 21 of 30. The two models were right on the same 33 cases. Those are exactly the cases where the faulty service showed a new or increased error or warning; in the other 27 it was not a candidate, and the rules let a model name only a candidate. In 23 of the 27 the faulty service's only new lines were INFO lines from its restart, and in 4 none of its lines were kept. Both systems are spent. The brief (section 14) records the mistakes, and section 33 the change of direction that followed.
