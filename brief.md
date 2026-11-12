@@ -1396,7 +1396,7 @@ Nothing is tuned on the spent sets (the held-out incidents, the test split, `dat
 - The leaderboard's rows are one agent, DeepResearch, with different models. That agent is a single model in a loop with four tools: list the tables, read a table's layout, run an SQL query, and a note-to-self tool. About 50 tool calls a case are recommended and 100 is the cap. It has no subagents and is given no dependency map. On 2026-11-12 the best row was Claude Opus 5 at 46.40% accuracy and 61.37% F1; Claude Sonnet 5 had 27.20% and 43.20%.
 - The paper names four ways that agent fails: it stops at the first plausible cause and misses faults that occur together; it reads silence from a killed service as normal; it fixates on the loudest signal, which is often a downstream effect; and it names the right service without a verified path to the symptom (76.0% against 61.5%).
 - No published system that beats the standard agent on 2.0 was found on 2026-11-12. On OpenRCA 1.0, a structured multi-agent pipeline (arXiv 2607.13548) raised the baseline agent's score most where it was given hand-written domain knowledge (Telecom 29.4% to 56.9%; 35.3% without it), and that knowledge was written against labelled cases. Two other multi-agent systems scored under 3%. So a multi-agent design alone promises nothing.
-- Not yet confirmed: the leaderboard's column definitions ("acc", "all-hit", "type-acc"), and whether the official scoring code and agent code are public. Phase 1 settles both.
+- Settled in phase 1 (below, and `docs/openrca2-task.md`): the scoring code is public, the leaderboard's columns are matched to it, and a co-author's version of the agent is public. Phase 1 also found that the leaderboard's rows were measured on an older, 500-case version of the dataset, so the second bullet above is wrong on that point.
 
 ### The phases
 
@@ -1431,3 +1431,68 @@ Each phase ends with something to read before the next begins.
 - The faults are injected on demonstration systems. They are infrastructure and code faults, not the integration failures of sections 1 to 8 (an expired credential, a schema mismatch, a partner's change), and the benchmark has no runbooks, specifications or change records. Beating it would show the investigation works on telemetry this project didn't write; it would not show the integration-specific parts.
 - The remediation plan and the approval gate are not scored there.
 - TrainTicket is also the application behind the spent RE3 Train Ticket cases. The testbed, the faults and the telemetry differ, and no RE3 finding is carried into this work as a rule.
+
+### Phase 0, done 2026-11-12: what may be looked at
+
+Everything below was fixed before any case's telemetry or answers were read. The code is in `src/flowguard/openrca2`, and it prints counts only.
+
+**The download.** `anon-ops/ops-lite` at commit `581eba39d0bfd2d397eded6cd7cbe3303255521a` was compared with the file list Hugging Face gives for that commit (`python -m flowguard.openrca2.download`). The repo holds 6,374 files and 2,872,924,770 bytes: 455 case folders of 14 files each, and four files beside them. Every local file matched in size and in hash: SHA-256 for the files stored in LFS, git's SHA-1 for the rest. Nothing was missing, nothing was extra, and the downloader's cache held no unfinished part. The SHA-256 of every file is saved in `answers/all-cases/download.sha256`; the SHA-256 of that list is `00b002b79d93564879971d671e70735d25a6cd8559fc47d2c6659292ffe5c2e1`.
+
+**The folders.** All under `data/external/openrca2`, which git ignores.
+
+```
+raw/                         what is left of the download: its README, croissant.json, the downloader's cache
+telemetry/dev/<id>/          the ten telemetry parquet files of a development case
+telemetry/held-out/<id>/     the same for a held-out case; not opened before the one test
+answers/dev/<id>/            env.json, injection.json, label.json, causal_graph.json
+answers/held-out/<id>/       the same; never read before the test
+answers/all-cases/           manifest.jsonl, case-ids.json, download.sha256
+split.json                   each ID with its system and its split, nothing else
+```
+
+`manifest.jsonl` came with the download and names every case's root services and fault kinds, held-out ones included, so it is kept with the answers and is not read. Tool code is given a folder under `telemetry/` and nothing above it. Development work that needs answers is given `answers/dev` only.
+
+**The IDs.** The original folder names are `batch-` followed by a ULID, which begins with a timestamp, so a name shows when a case was recorded and which cases were recorded together. Each case was renamed `case-001` to `case-455`, in an order shuffled with the seed, so an ID says nothing about the system or the date. The map from the original names is `answers/all-cases/case-ids.json` (SHA-256 `b371d6e9b8afd577681310e05a55102cbbb68fc2bb2fffdec0feb69712fa6c06`). To undo the move, that map and `split.json` say where each file came from.
+
+**The split.** Made by `python -m flowguard.openrca2.prepare` with seed `20261112`. From the manifest it read each record's folder name and system, and no other field. Development is 100 of the 455 cases, shared among the systems in proportion and drawn at random within each.
+
+| System | Development | Held out | All |
+|---|---|---|---|
+| TrainTicket (`ts`) | 60 | 215 | 275 |
+| Hotel Reservation (`hs`) | 33 | 115 | 148 |
+| OTel Demo (`otel-demo`) | 7 | 25 | 32 |
+| Total | 100 | 355 | 455 |
+
+The SHA-256 of `split.json` is `74c8e2871481ce963f2e8f1bb8fa5cd98846cc3c62e9ec8c5c104c3c518530ae`. The program refuses to run again once that file exists, and a test fails if the file changes. After the move, every one of the 6,370 case files was hashed again in its new place against the saved list (`--verify`), with none missing or changed.
+
+One case was not left to chance. The dataset's README prints one case's `label.json` as its example, so that Hotel Reservation case's answer was seen while reading the layout. It was put in development before the draw, and the other 32 Hotel Reservation places were drawn from the remaining 147. This rule was set before the draw and used nothing but the README.
+
+**The guard.** `CaseTelemetry` (`openrca2/access.py`) is the one way tool code gets a path. It gives the ten telemetry file names of one case and refuses anything else: an answer file's name even if the file is in the folder, any other name, a path that climbs out of the folder, an absolute path, a link, and a case ID that is not `case-` and digits. It refuses the held-out folder unless told the run is the final test. `tests/unit/test_openrca2.py` checks each refusal on stand-in files, and, where the data is present, checks that the telemetry folders hold 4,550 parquet files and nothing else, and that no answer file is left in `raw`.
+
+**What this does not cover.**
+
+- The guard covers paths that Python code opens. A query engine that reads a file named inside a query would go round it, so any such engine must have file access turned off where it is set up, with its own test. That is decided with the tools, not now.
+- Whether the telemetry itself gives the answer away (a column, a file's metadata, a leftover log line from the injection tooling) is not known. The README says the tooling's log lines were removed. Phase 2 checks this on development cases.
+- Seven OTel Demo development cases is few for a system with seven fault kinds. It is what a proportional share of 100 gives.
+- `raw/croissant.json` was not opened. The downloader's cache in `raw/.cache` still holds the original folder names, with no answers. Both are outside what tools are given.
+
+**What was seen while doing this.** Nothing inside a case. Two things outside one: the README's example label, dealt with above, and 15 original folder names, printed when the downloader's cache was listed to check for unfinished parts. Those names are opaque IDs and were not matched to anything.
+
+### Phase 1, done 2026-11-12: the task and its scoring
+
+The task sheet is `docs/openrca2-task.md`. It was written from the paper, the dataset's README, the leaderboard site and the official scoring code; no case was opened. What it settles, and what it changes in this plan:
+
+- **The task.** An agent gets the ten tables and a fixed text saying a user reports slow or failing requests. It returns root causes, each a service with one of 25 kinds of fault, and the edges along which the fault spread, each with a SQL query as evidence.
+- **The scoring code is public**: `rcabench_platform/v3/sdk/evaluation` in `github.com/OperationsPAI/aegis`, commit `979ae70` of 2026-08-11. A claim is a hit when the service and the kind are both right. For a network fault either end of the link counts; for any other kind only the service the fault was injected on. Two pairs of kinds count as the same answer.
+- **The leaderboard's columns**, matched to that code by name: f1 is the mean F1 over (service, kind) pairs; acc is exact match, where one extra claim or one wrong kind scores 0; all-hit is every true fault's service named with the kind ignored; type-acc is the share of right services that also have the right kind; path-acc is a hit root cause joined to an alarmed service through the answer's own edges. The site defines none of them, and any-hit and path-acc are not confirmed.
+- **The published rows are not on our cases.** The site was last updated on 2026-07-25, and its percentages are whole counts out of 500. The dataset was replaced on 2026-09-26 by version 2.1.0, with 455 cases and corrected labels, which is the commit downloaded here. So Claude Opus 5's 46.40% and 61.37% are on 500 cases with the old labels, and a score on our 355 held-out cases cannot be set directly against them.
+- **No public scorer knows the new labels.** The public code counts every injected fault as a true one. Version 2.1.0 gives each fault a role in `label.json`: required, optional (naming it is neither required nor penalised) or not effective (naming it is a wrong root cause). The scorer here will be the public code's matching with those roles, and its numbers are not official.
+- **The standard agent.** A co-author's adaptation is public (`github.com/QishengLu/rca_study_thinkdepthai`, commit `26b5166`), and the paper prints the prompts. The harness that drives it is not public.
+
+Decisions this leaves, none taken yet:
+
+1. Whether the bar is the published rows, as a rough guide, or the standard agent run on our held-out cases with our scorer. Only the second is like for like, and it costs model calls on 355 cases. Decided in phase 4, once phase 3 has measured the cost per case.
+2. The scorer's open points are written down before any development case is scored: how a claim naming an optional fault enters precision and exact match, and how the true graph's services are read.
+3. The scoring code's design note gives rules for telling kinds of fault apart, some with thresholds its authors measured on labelled cases of the whole set, which includes our held-out cases. It was read in this phase. Proposed: the scoring rules are part of the task and are used; the thresholds are not used unless the final report says so.
+
+The split of phase 0 stands: nothing was changed after it, and from here on it is not redrawn.
