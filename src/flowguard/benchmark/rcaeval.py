@@ -8,13 +8,17 @@ injected into one service: incorrect parameter values (f1), missing parameters
 exception handler (f5). The label is the faulty service.
 
 A case holds tens of thousands of log lines, and FlowGuard's log search returns at
-most 50 lines to a model with an 8,192-token context. So this does what a log
-platform's pattern view does: it groups each service's messages into patterns,
-counts each pattern before and after the incident's start, and keeps the patterns
-that matter most, one line each with its counts. Errors and warnings after the
-start come first, then patterns that only appear after it, then errors that
+most 50 lines to a model with an 8,192-token context. So this is a connector
+that does what a log platform's pattern view does: it groups each service's
+messages into patterns, counts each pattern before and after the incident's start,
+and keeps the patterns that matter most, one line each. Errors and warnings after
+the start come first, then patterns that only appear after it, then errors that
 stopped. The same rules apply to every case; they were set on Sock Shop, the
 development system, before any other system was converted.
+
+The connector only counts. What the counts mean (new, increased, background,
+stopped) is worked out in FlowGuard (domain/signals.py), the same for any setup.
+The folder's setup.json says that this testbed records no changes.
 
 What is kept from each case: logs only, in a window from 5 minutes before the
 injection to 10 minutes after. Metrics are left out. The dependency map comes
@@ -37,6 +41,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+from flowguard.domain.setup import SetupProfile
 from flowguard.seed_schemas import DependencyMapRecord, GroundTruth, LogRecord
 
 # Some messages are whole stack traces.
@@ -60,10 +65,11 @@ PER_SERVICE = {"active_errors": 4, "new_patterns": 2, "stopped_errors": 1}
 MAX_NEW_PATTERNS = 15
 MESSAGE_LINES = 4
 MESSAGE_CHARS = 500
-# The log text kept per case, counting about 90 characters of heading per line, so
-# that both questions fit Gemma's 8,192-token context with the prompts and the map.
+# The log text kept per case, counting about 200 characters of heading and signal
+# per line, so that both questions fit Gemma's 8,192-token context with the prompts
+# and the map.
 CASE_CHARS = 14_000
-LINE_HEADING = 90
+LINE_HEADING = 200
 
 Level = Literal["DEBUG", "INFO", "WARN", "ERROR"]
 
@@ -230,15 +236,7 @@ def clock(when: datetime) -> str:
     return when.strftime("%H:%M")
 
 
-def summary(pattern: Pattern, started: datetime) -> str:
-    return (
-        f"[this pattern: {pattern.after} times from {clock(started)} to "
-        f"{clock(started + AFTER)}, {pattern.before} times from "
-        f"{clock(started - BEFORE)} to {clock(started)}]"
-    )
-
-
-def log_line(pattern: Pattern, started: datetime) -> dict[str, Any]:
+def log_line(pattern: Pattern) -> dict[str, Any]:
     # A pattern is shown when it was first seen in the window, as a log platform's
     # pattern view does, so one that was already there before the start shows so.
     if pattern.first_before is not None:
@@ -250,9 +248,15 @@ def log_line(pattern: Pattern, started: datetime) -> dict[str, Any]:
         "timestamp": when,
         "service": pattern.service,
         "level": pattern.level,
-        "message": f"{shortened(example)}\n{summary(pattern, started)}",
+        "message": shortened(example),
         "exception_type": exception_type(example),
-        "metadata": {"count_after": pattern.after, "count_before": pattern.before},
+        # The counts FlowGuard's signals are worked out from.
+        "metadata": {
+            "count_before": pattern.before,
+            "count_after": pattern.after,
+            "minutes_before": BEFORE.total_seconds() / 60,
+            "minutes_after": AFTER.total_seconds() / 60,
+        },
     }
 
 
@@ -373,7 +377,8 @@ CASE_NAME = re.compile(r"^(?P<service>.+)_(?P<fault>f\d)(?:_\d+)?$")
 
 
 def cases_in(raw: Path, code: str) -> Iterator[Case]:
-    for folder in sorted((raw / f"RE3-{code}").iterdir()):
+    # Only folders are cases; the download also holds stray files such as .DS_Store.
+    for folder in sorted(p for p in (raw / f"RE3-{code}").iterdir() if p.is_dir()):
         named = CASE_NAME.match(folder.name)
         if not named:
             raise ValueError(f"unexpected case folder: {folder}")
@@ -396,10 +401,7 @@ def convert(raw: Path, code: str, split: str, out: Path) -> int:
     calls: set[tuple[str, str]] | None = None if code == "SS" else set()
     for case in cases:
         case.lines = within_budget(
-            [
-                log_line(p, case.started)
-                for p in select(read_patterns(case.path, case.started))
-            ]
+            [log_line(p) for p in select(read_patterns(case.path, case.started))]
         )
         if calls is not None:
             calls |= traced_calls(case.path, case.started)
@@ -431,6 +433,11 @@ def convert(raw: Path, code: str, split: str, out: Path) -> int:
             f.write(record.model_dump_json() + "\n")
     (out / "dependency_maps" / f"{system}.json").write_text(
         dependency_map(system, calls).model_dump_json(by_alias=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    # RE3 injects a fault by redeploying a service, and keeps no record of it.
+    (out / "setup.json").write_text(
+        SetupProfile(recorded_changes=()).model_dump_json(indent=2) + "\n",
         encoding="utf-8",
     )
     (out / "README.md").write_text(README.format(system=system), encoding="utf-8")
@@ -499,7 +506,7 @@ Converted from RCAEval (Pham et al., "RCAEval: A Benchmark for Root Cause Analys
 of Microservice Systems with Telemetry Data", 2025), dataset RE3, published on
 Zenodo (https://doi.org/10.5281/zenodo.14590730) under CC BY 4.0. Converted by
 `python -m flowguard.benchmark.rcaeval`: logs condensed to patterns with counts,
-and a dependency map. Not redistributed in this repository.
+a dependency map, and a setup profile. Not redistributed in this repository.
 """
 
 

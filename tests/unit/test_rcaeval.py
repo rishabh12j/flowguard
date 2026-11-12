@@ -17,7 +17,8 @@ from flowguard.benchmark.rcaeval import (
     traced_calls,
     within_budget,
 )
-from flowguard.dataset import load_evidence, load_ground_truth
+from flowguard.dataset import load_evidence, load_ground_truth, load_profile
+from flowguard.domain.signals import kind_of
 from flowguard.evaluation.rcaeval import score
 
 START = datetime(2024, 11, 22, 3, 6, tzinfo=UTC)
@@ -101,14 +102,18 @@ def test_each_service_is_capped_and_the_total_too():
 
 
 def test_a_pattern_seen_before_the_start_is_shown_when_first_seen():
-    old = log_line(pattern("a", "ERROR", before=3, after=7), START)
-    new = log_line(pattern("b", "ERROR", after=7), START)
+    old = log_line(pattern("a", "ERROR", before=3, after=7))
+    new = log_line(pattern("b", "ERROR", after=7))
 
     assert old["timestamp"] < START <= new["timestamp"]
-    assert old["message"].endswith(
-        "[this pattern: 7 times from 03:06 to 03:16, 3 times from 03:01 to 03:06]"
-    )
-    assert new["metadata"] == {"count_after": 7, "count_before": 0}
+    # The connector only counts; FlowGuard words what the counts mean.
+    assert old["message"] == "a x early"
+    assert new["metadata"] == {
+        "count_before": 0,
+        "count_after": 7,
+        "minutes_before": 5.0,
+        "minutes_after": 10.0,
+    }
 
 
 def test_lines_are_kept_in_order_of_importance_within_the_budget():
@@ -204,6 +209,8 @@ def converted(tmp_path):
     raw = tmp_path / "raw"
     raw_case(raw, "carts_f3", 1, START, ROWS)
     raw_case(raw, "orders_f1", 1, START + timedelta(hours=1), ROWS[2:4])
+    # A stray file beside the case folders, as in the download, is not a case.
+    (raw / "RE3-SS" / ".DS_Store").write_text("")
     out = tmp_path / "out"
     assert convert(raw, "SS", "dev", out) == 2
     return out
@@ -228,6 +235,10 @@ def test_cases_become_incidents_with_their_own_window_and_label(tmp_path):
     carts = next(i for i in first if i.source_name == "carts")
     assert truth.required_evidence_ids == [carts.evidence_id]
     assert any(i.source_type == "dependency_map" for i in load_evidence(out))
+    # The testbed keeps no record of the release that carried the fault.
+    assert load_profile(out).recorded_changes == ()
+    queue = next(i for i in first if i.source_name == "queue-master")
+    assert (kind_of(queue), kind_of(carts)) == ("steady", "new")
 
 
 def test_cases_that_overlap_in_time_are_refused(tmp_path):
@@ -241,7 +252,7 @@ def test_cases_that_overlap_in_time_are_refused(tmp_path):
 
 def journal(path, results):
     with open(path / "evaluation-dev.journal.jsonl", "w", encoding="utf-8") as f:
-        for incident_id, category, service in results:
+        for incident_id, category, service, *located in results:
             result = {
                 "incident_id": incident_id,
                 "family": "carts_f3" if incident_id.endswith("1") else "orders_f1",
@@ -271,6 +282,7 @@ def journal(path, results):
                 "unsafe_steps": [],
                 "approval_bypassed": False,
                 "root_cause_service": service,
+                "located": bool(located),
                 "abstention": "isolated" if category == "unknown" else None,
             }
             f.write(json.dumps({"result": result, "abstention": {}}) + "\n")
@@ -299,4 +311,32 @@ def test_a_run_is_scored_by_the_service_with_two_baselines(tmp_path):
     assert result.majority_baseline == 0.5
     # In both cases the first new error after the start is in orders.
     assert result.first_error_baseline == 0.5
+    # carts and orders both have new problems, and orders depends on carts, so
+    # the deepest service is carts in both cases: right once.
+    assert result.deepest_baseline == 0.5
     assert not result.partial
+
+
+def test_a_located_service_counts_as_named_and_is_reported_apart(tmp_path):
+    out = converted(tmp_path)
+    report = tmp_path / "report"
+    report.mkdir()
+    journal(
+        report,
+        [
+            ("RE3-SS-001", "unknown", "carts", True),
+            ("RE3-SS-002", "unknown", "carts", True),
+        ],
+    )
+
+    result = score(out, report, "dev")
+
+    counts = result.counts
+    assert (counts.right, counts.located, counts.wrong, counts.abstained) == (
+        0,
+        1,
+        1,
+        0,
+    )
+    assert result.accuracy == 0.5 and result.precision == 0.5
+    assert result.by_service["carts"].located == 1

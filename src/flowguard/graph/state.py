@@ -44,6 +44,9 @@ class InvestigationState(TypedDict, total=False):
     decision_rule: str
     # Where the explain path's second answer says the cause lies. Recorded only.
     root_cause_service: str | None
+    # True when FlowGuard found where the failure is but not why: it names the
+    # service, abstains on the cause, and plans nothing.
+    located: bool
     status: InvestigationStatus
     proposed_actions: tuple[ProposedAction, ...]
     actions: tuple[PlannedAction, ...]

@@ -23,7 +23,17 @@ neutral IDs, so a document's name can't hint at its family.
 Since 2026-11-11 the second answer also names the service where the cause lies,
 chosen from the services in the evidence, so FlowGuard can be scored on
 benchmarks that label a root-cause service, such as RCAEval. It is recorded, and
-decides nothing.
+decides nothing unless the logs carry signals.
+
+Since 2026-11-12, when a connector counts each log pattern before and after the
+failure began (domain/signals.py), code works out what changed and the rules use
+it. The model is told which patterns are new, increased, background or stopped,
+and chooses the service from code's candidates: the services with a new or
+increased error or warning. A name outside them is refused. And when the setup
+doesn't record every kind of change (domain/setup.py), "nothing explains it" no
+longer has to mean there is no cause, so FlowGuard reports where the failure is
+without saying why: it names the service, abstains on the cause and plans nothing.
+Logs without counts get none of this, and are decided as before.
 """
 
 from collections.abc import Mapping, Sequence
@@ -42,6 +52,8 @@ from flowguard.domain.hypotheses import (
     RootCauseHypothesis,
 )
 from flowguard.domain.incidents import Incident
+from flowguard.domain.setup import SetupProfile
+from flowguard.domain.signals import below, callees, candidates, describe
 from flowguard.graph.context import Dependencies
 from flowguard.graph.nodes.root_cause import EVIDENCE_NODES, unfenced
 from flowguard.graph.state import InvestigationState
@@ -85,6 +97,19 @@ EXPLAIN_SYSTEM = (
     "failed: if a change made something else go wrong, use the category of what went "
     "wrong, not of the change. Cite the evidence by its ID. " + DATA + CATEGORIES
 )
+# Added to both questions only when the logs carry signals, so a setup without
+# them is asked exactly what it was asked before.
+SIGNALS_NOTE = (
+    " Each log line here is one message pattern. Its Signal line, counted by code, "
+    "says whether the pattern is new since the failure began, increased, background "
+    "(about as frequent before the failure as since) or stopped. A background "
+    "pattern was already happening, so it is not what started this failure."
+)
+CANDIDATES_NOTE = (
+    " Choose the service from <candidates>: the services with a new or increased "
+    "error or warning, listed with the candidates each depends on. A service that "
+    "another depends on can cause that one's errors, and not the other way round."
+)
 
 
 class Answer(BaseModel):
@@ -120,10 +145,12 @@ def format_item(neutral_id: str, item: EvidenceItem) -> str:
     kind: str = item.source_type
     if kind == "log" and item.metadata.get("level"):
         kind = f"log ({item.metadata['level']})"
+    signal = describe(item)
     return (
         f"ID: {neutral_id}\n"
         f"Type: {kind} | Source: {item.source_name} | Time: {when}\n"
-        f"{unfenced(item.title)}\n{unfenced(item.content)}"
+        + (f"Signal: {signal}\n" if signal else "")
+        + f"{unfenced(item.title)}\n{unfenced(item.content)}"
     )
 
 
@@ -149,6 +176,10 @@ def services_in(shown: Mapping[str, EvidenceItem]) -> list[str]:
 def cite_only(schema: dict[str, Any], ids: list[str]) -> dict[str, Any]:
     # Restricting citations to the IDs shown means the model can't invent one.
     schema["properties"]["evidence_ids"]["items"] = {"type": "string", "enum": ids}
+    # No more citations than there are IDs. Gemma sometimes repeats the list until
+    # its answer is cut off mid-way, which this stops; an answer that cites each
+    # ID at most once is unaffected.
+    schema["properties"]["evidence_ids"]["maxItems"] = len(ids)
     return schema
 
 
@@ -162,13 +193,28 @@ def parse(model: type[Answer], text: str) -> Any:
 
 
 def read_symptoms(
-    incident: Incident, symptoms: Mapping[str, EvidenceItem], llm: LLM
+    incident: Incident,
+    symptoms: Mapping[str, EvidenceItem],
+    llm: LLM,
+    signalled: bool = False,
 ) -> Reading:
     schema = cite_only(Reading.model_json_schema(), list(symptoms))
+    system = READ_SYSTEM + (SIGNALS_NOTE if signalled else "")
     reading: Reading = parse(
-        Reading, llm.generate(READ_SYSTEM, evidence_prompt(incident, symptoms), schema)
+        Reading, llm.generate(system, evidence_prompt(incident, symptoms), schema)
     )
     return reading
+
+
+def candidates_block(found: Sequence[str], evidence: Sequence[EvidenceItem]) -> str:
+    calls = callees(evidence)
+    lines = []
+    for service in found:
+        deeper = sorted(below(service, calls) & set(found))
+        lines.append(
+            f"{service} (depends on {', '.join(deeper)})" if deeper else service
+        )
+    return "<candidates>\n" + "\n".join(lines) + "\n</candidates>\n\n"
 
 
 def explain_failure(
@@ -177,6 +223,7 @@ def explain_failure(
     changes: Sequence[str],
     reading: Reading,
     llm: LLM,
+    found: Sequence[str] | None = None,
 ) -> Explanation:
     schema = cite_only(Explanation.model_json_schema(), list(shown))
     schema["properties"]["explained_by"]["enum"] = [
@@ -184,15 +231,20 @@ def explain_failure(
         NO_CHANGE_NEEDED,
         UNEXPLAINED,
     ]
-    schema["properties"]["service"]["enum"] = services_in(shown)
+    # With signals, code proposes where the cause can lie and the model chooses.
+    schema["properties"]["service"]["enum"] = (
+        services_in(shown) if found is None else list(found)
+    )
     text = unfenced(reading.failure).replace("<", "[").replace(">", "]")
     prompt = (
         f"<reading>\nWhat failed: {text}\nCategory: {reading.category}\n</reading>\n\n"
+        + ("" if found is None else candidates_block(found, list(shown.values())))
         + evidence_prompt(incident, shown)
     )
-    explanation: Explanation = parse(
-        Explanation, llm.generate(EXPLAIN_SYSTEM, prompt, schema)
-    )
+    system = EXPLAIN_SYSTEM
+    if found is not None:
+        system += SIGNALS_NOTE + CANDIDATES_NOTE
+    explanation: Explanation = parse(Explanation, llm.generate(system, prompt, schema))
     return explanation
 
 
@@ -211,19 +263,37 @@ class Diagnosis:
     # Where the second answer says the cause lies; None if it wasn't asked, or named
     # a service the evidence doesn't.
     service: str | None = None
+    # True when the service is reported without a cause: an abstention that still
+    # says where the failure is.
+    located: bool = False
 
 
 def diagnose(
-    incident: Incident, evidence: Sequence[EvidenceItem], llm: LLM
+    incident: Incident,
+    evidence: Sequence[EvidenceItem],
+    llm: LLM,
+    profile: SetupProfile | None = None,
 ) -> Diagnosis:
     """Code's decision from the two answers. Raises InvalidAnswer or LLMError."""
     if not any(item.source_type == "log" for item in evidence):
         return Diagnosis(
             "unknown", abstention="no logs were gathered, so no failure can be read"
         )
+    # None when the logs carry no counts, and then nothing below uses signals.
+    found = candidates(evidence)
+    if found is not None and not found:
+        return Diagnosis(
+            "unknown",
+            abstention="no service shows a new or increased error since the "
+            "failure began",
+        )
+    # Where the failure is can be reported without its cause only when code has
+    # candidates and the setup doesn't record every kind of change.
+    unrecorded = (profile or SetupProfile()).unrecorded
+    can_locate = bool(found) and bool(unrecorded)
     shown = neutral_ids(evidence)
     symptoms = {k: v for k, v in shown.items() if v.source_type in SYMPTOMS}
-    reading = read_symptoms(incident, symptoms, llm)
+    reading = read_symptoms(incident, symptoms, llm, signalled=found is not None)
     unknown_ids = sorted(set(reading.evidence_ids) - set(symptoms))
     if unknown_ids:
         raise InvalidAnswer(
@@ -249,11 +319,13 @@ def diagnose(
         return abstain("the reading of the symptoms cites no log")
     if reading.pattern == "isolated":
         return abstain("the symptoms show an isolated problem, not a sustained failure")
-    if reading.category == "unknown":
+    # A failure with no category can still be located, so the second question
+    # is asked when that is possible.
+    if reading.category == "unknown" and not can_locate:
         return abstain("the symptoms don't show which category failed")
 
     changes = [k for k, v in shown.items() if v.source_type in CHANGE_TYPES]
-    explanation = explain_failure(incident, shown, changes, reading, llm)
+    explanation = explain_failure(incident, shown, changes, reading, llm, found)
     unknown_ids = sorted(set(explanation.evidence_ids) - set(shown))
     if unknown_ids:
         raise InvalidAnswer(f"the explanation cites unknown evidence: {unknown_ids}")
@@ -263,12 +335,37 @@ def diagnose(
     notes: tuple[str, ...] = (
         f"explained by: {shown[by].evidence_id if by in changes else by}",
     )
-    # Recorded only, so a service the evidence doesn't name is dropped rather than
-    # failing an answer that is otherwise sound.
-    service = explanation.service if explanation.service in services_in(shown) else None
-    if service is None:
-        notes += (f"named a service not in the evidence: {explanation.service}",)
+    service: str | None = explanation.service
+    if found is None:
+        # Recorded only, so a service the evidence doesn't name is dropped rather
+        # than failing an answer that is otherwise sound.
+        if service not in services_in(shown):
+            notes += (f"named a service not in the evidence: {service}",)
+            service = None
+    elif service not in found:
+        # An error that was already happening can't be what started the failure.
+        return abstain(
+            "the named service shows no new or increased error",
+            (*notes, f"named: {service}"),
+        )
+
+    def located() -> Diagnosis:
+        supporting.extend(shown[k].evidence_id for k in explanation.evidence_ids)
+        return Diagnosis(
+            "unknown",
+            f"{reading.failure} {explanation.explanation}",
+            tuple(dict.fromkeys(supporting)),
+            reading.category,
+            f"located in {service}, but nothing recorded explains the failure; "
+            f"this setup doesn't record these kinds of change: {', '.join(unrecorded)}",
+            notes,
+            service,
+            located=True,
+        )
+
     if explanation.explained_by == UNEXPLAINED:
+        if can_locate:
+            return located()
         return abstain("nothing in the evidence explains the failure", notes, service)
     category: IncidentCategory = reading.category
     if explanation.explained_by in changes:
@@ -281,6 +378,9 @@ def diagnose(
         raise InvalidAnswer(
             f"explained by something that isn't a change: {explanation.explained_by}"
         )
+    if category == "unknown":
+        # Only reached when the failure can be located: what failed has no category.
+        return located()
     supporting += [shown[k].evidence_id for k in explanation.evidence_ids]
     return Diagnosis(
         category,
@@ -301,7 +401,9 @@ def explained_root_cause(
     if not evidence:
         return {"abstention": "no evidence was gathered", "category": "unknown"}
     try:
-        diagnosis = diagnose(state["incident"], evidence, runtime.context.llm)
+        diagnosis = diagnose(
+            state["incident"], evidence, runtime.context.llm, runtime.context.profile
+        )
     except (LLMError, InvalidAnswer) as error:
         return {
             "abstention": f"the model could not diagnose the incident: {error}",
@@ -319,6 +421,7 @@ def explained_root_cause(
         "missing_sources": missing_sources,
         "errors": tuple(f"root_cause: {note}" for note in diagnosis.notes),
         "root_cause_service": diagnosis.service,
+        "located": diagnosis.located,
     }
     hypothesis = None
     if diagnosis.supporting:

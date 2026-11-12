@@ -235,3 +235,17 @@
 - Added `python -m flowguard.benchmark.rcaeval`, which converts RCAEval RE3 cases (real logs from three open-source microservice systems, with injected code faults) into FlowGuard's incident format, condensing each case's logs to patterns with counts.
 - Added `python -m flowguard.evaluation.rcaeval`, which scores a run on those incidents by the root-cause service, against two baselines that use no model.
 - Ground truth can name a `root_cause_service`. `data/external/`, for downloaded public datasets, is ignored by git.
+
+## 2026-11-12
+
+- Recorded the first runs on RCAEval RE3 Sock Shop, the development set: Gemma named the faulty service in 7 of 30 and blamed queue-master, which logs the same error all day, in 22; Sonnet diagnosed 3 and abstained on 22, naming the right service in 12 of those. Always guessing the commonest service is right in 12. The benchmark-2031 development incidents were unchanged by the service question (brief, section 14).
+- Added `domain/signals.py`. When a connector counts each log pattern before and after the reported start, code labels it new, increased, steady or stopped, and lists the candidate services: those with a new or increased error or warning, deepest in the dependency map first.
+- Added a setup profile, `setup.json` in a data folder (`domain/setup.py`), listing the kinds of change the setup records. Without the file, every kind is taken as recorded.
+- The explain path now uses both. With signals, the model sees each pattern's signal, chooses the service from the candidates, and a name outside them is refused. Where some kind of change is not recorded, an unexplained failure is reported as located: the service is named, the cause is not, and nothing is planned. Logs without counts are asked and decided exactly as before.
+- The audit record and the evaluation results carry `located`.
+- The RE3 converter is now a connector that only counts: the counts go in each line's metadata, and it writes a `setup.json` saying the testbed records no changes.
+- The RE3 scorer counts a located service as named, reports diagnosed and located apart, and adds a third baseline with no model: the one candidate that depends on no other.
+- Ran both models on Sock Shop again with signals. Sonnet named the faulty service in 21 of 30 with no wrong name (3 right and 5 wrong before); Gemma in 18 with 6 wrong (7 and 23 before). The deepest-candidate baseline, with no model, is right in 25 (brief, section 14).
+- Fixed Gemma repeating the list of evidence IDs until its answer was cut off, which lost 4 of the 30 cases: the schema of both questions now allows no more citations than there are IDs shown.
+- Repeated Gemma's Sock Shop run with the citation limit: 22 of 30 right, 6 wrong, 2 abstentions (`reports/rcaeval-re3-dev-signals-gemma-2`). Froze the rules and converted Online Boutique and Train Ticket as the test set (brief, section 14).
+- The RE3 converter reads only folders as cases; a stray `.DS_Store` in the Train Ticket download stopped it.

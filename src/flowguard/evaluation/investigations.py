@@ -26,6 +26,7 @@ from flowguard.dataset import (
     load_evidence,
     load_ground_truth,
     load_incident,
+    load_profile,
 )
 from flowguard.domain.audit import InvestigationRecord
 from flowguard.domain.decision import RULES, Rule
@@ -132,6 +133,7 @@ class IncidentResult(Model):
     errors: list[str] = []
     # Since 2026-11-11: the service the explain path says holds the cause.
     root_cause_service: str | None = None
+    located: bool = False
 
 
 class AbstentionResult(Model):
@@ -336,6 +338,7 @@ def score_run(
         abstention=record.abstention,
         errors=list(record.errors),
         root_cause_service=record.root_cause_service,
+        located=record.located,
     )
 
 
@@ -575,6 +578,7 @@ async def run_incident(
                     fit=decider.fit,
                     check=decider.check,
                     diagnosis=decider.diagnosis,
+                    profile=load_profile(data_dir),
                 ),
             )
     except BaseExceptionGroup as group:

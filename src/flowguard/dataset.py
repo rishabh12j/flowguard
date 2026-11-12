@@ -4,6 +4,7 @@ from typing import Any
 
 from flowguard.domain.evidence import EvidenceItem, SourceType
 from flowguard.domain.metrics import metric_evidence
+from flowguard.domain.setup import SetupProfile
 from flowguard.seed_schemas import (
     AlertRecord,
     DependencyMapRecord,
@@ -31,6 +32,17 @@ def load_incident(incident_id: str, data_dir: Path = DATA_DIR) -> dict[str, Any]
 def load_ground_truth(incident_id: str, data_dir: Path = DATA_DIR) -> GroundTruth:
     return GroundTruth.model_validate(
         _read_json(data_dir / "ground_truth" / f"{incident_id}.json")
+    )
+
+
+def load_profile(data_dir: Path = DATA_DIR) -> SetupProfile:
+    """What the setup behind this data records; every kind of change when the
+    folder has no setup.json."""
+    path = data_dir / "setup.json"
+    return (
+        SetupProfile.model_validate(_read_json(path))
+        if path.exists()
+        else SetupProfile()
     )
 
 

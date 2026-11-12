@@ -62,6 +62,7 @@ def build_record(
         missing_sources=state.get("missing_sources", 0),
         decision_rule=state.get("decision_rule"),
         root_cause_service=state.get("root_cause_service"),
+        located=state.get("located", False),
     )
 
 

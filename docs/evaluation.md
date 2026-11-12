@@ -428,3 +428,19 @@ python -m flowguard.evaluation.investigations --data-dir data/benchmark-2028 --s
 python -m flowguard.evaluation.rules reports/benchmark-2028-rules-gemma reports/benchmark-2028-rules-claude
 python -m flowguard.evaluation.confirm reports/benchmark-2030-gemma reports/benchmark-2030-claude   # the pass mark for a rule's one confirmation
 ```
+
+## Real logs: RCAEval RE3
+
+RCAEval's RE3 has 90 code faults injected into three open-source microservice systems, with their real logs and the faulty service as the label. It isn't in the repository; download it to `data/external/rcaeval-re3/raw` (brief, section 14). Sock Shop is the development system. Online Boutique and Train Ticket are the test, and aren't converted until the test's terms are fixed.
+
+```powershell
+python -m flowguard.benchmark.rcaeval --raw data/external/rcaeval-re3/raw --system SS --split dev --out data/external/rcaeval-re3/sock-shop
+python -m flowguard.evaluation.investigations --data-dir data/external/rcaeval-re3/sock-shop --split dev --output-dir reports/rcaeval-re3-dev-signals-gemma
+python -m flowguard.evaluation.rcaeval --data-dir data/external/rcaeval-re3/sock-shop --report-dir reports/rcaeval-re3-dev-signals-gemma --split dev
+```
+
+The converter is a connector: it groups each service's messages into patterns and counts each one before and after the reported start. FlowGuard works out from the counts which patterns are new, increased, steady or stopped, and which services are candidates for the cause (`domain/signals.py`). The folder's `setup.json` says the testbed records no changes, so a failure nothing explains is reported as located: the service without a cause.
+
+The scorer counts how often FlowGuard names the faulty service, diagnosed or located, beside three baselines that use no model: the one candidate that depends on no other, the commonest faulty service, and the first error's service.
+
+The first Sock Shop runs, before signals, are in `reports/rcaeval-re3-dev-gemma` (7 of 30 right, 23 wrong) and `reports/rcaeval-re3-dev-sonnet` (3 right, 5 wrong, 22 abstentions).

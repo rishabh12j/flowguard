@@ -6,6 +6,7 @@ from typing import Literal, NamedTuple, Protocol
 from flowguard.domain.audit import InvestigationRecord, ToolCallRecord
 from flowguard.domain.decision import Rule
 from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.setup import SetupProfile
 from flowguard.llm.client import LLM
 
 
@@ -69,3 +70,6 @@ class Dependencies:
     # change explains them (graph/nodes/explain.py). "hypotheses" is the earlier
     # way, hypotheses scored by the rule above, kept to compare against.
     diagnosis: Literal["hypotheses", "explain"] = "explain"
+    # What this setup records. The explain path reads it to tell "nothing changed"
+    # from "changes of that kind aren't recorded here".
+    profile: SetupProfile = SetupProfile()

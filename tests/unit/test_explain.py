@@ -113,6 +113,8 @@ def test_the_first_question_shows_only_symptoms_with_neutral_ids():
     for original in ("LOG-00089", "SPEC-00012", "DEPLOY-BILLING-00084"):
         assert original not in prompt
     assert schema["properties"]["evidence_ids"]["items"]["enum"] == ["E1", "E2"]
+    # A citation list can't run longer than the IDs shown.
+    assert schema["properties"]["evidence_ids"]["maxItems"] == 2
 
 
 def test_the_second_question_shows_the_reading_and_the_changes():

@@ -72,3 +72,5 @@ class InvestigationRecord(BaseModel):
     decision_rule: str | None = None
     # Since 2026-11-11: the service the explain path says holds the cause.
     root_cause_service: str | None = None
+    # Since 2026-11-12: the service was located, but the cause is unexplained.
+    located: bool = False

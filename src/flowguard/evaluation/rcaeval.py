@@ -1,11 +1,15 @@
 """Score a run on RCAEval RE3 incidents by the root-cause service.
 
 RE3 labels each case with the service a code fault was released into, so an
-answer is right when FlowGuard diagnoses (doesn't abstain) and names that
-service. Every case has a cause, so an abstention is a miss. The category isn't
-scored: every case is a release broken in itself.
+answer is right when FlowGuard names that service, either with a diagnosis or as
+"located": the service reported without a cause, which is the most FlowGuard can
+say where no change is recorded. Every case has a cause, so an abstention is a
+miss. The category isn't scored: every case is a release broken in itself.
 
-Two baselines use no model, so a model's score can be read against them:
+Three baselines use no model, so a model's score can be read against them:
+- the deepest service: the one service with a new or increased error that depends
+  on no other such service (domain/signals.py). FlowGuard's own candidates come
+  from the same signals, so this shows what the model adds to them;
 - the most common faulty service among the cases in the folder, always guessed;
 - the service of the first ERROR line at or after the incident's reported start,
   in the same condensed logs the model sees.
@@ -23,18 +27,33 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from flowguard.benchmark.rcaeval import BEFORE
-from flowguard.dataset import incident_ids, load_ground_truth, load_incident
+from flowguard.dataset import (
+    incident_ids,
+    load_evidence,
+    load_ground_truth,
+    load_incident,
+)
+from flowguard.domain.evidence import EvidenceItem
+from flowguard.domain.signals import deepest
 from flowguard.evaluation.investigations import IncidentResult, family_interval, wilson
 
 
 class Counts(BaseModel):
+    # The right service, with a diagnosed cause.
     right: int = 0
+    # The right service, located without a cause.
+    located: int = 0
+    # A wrong service, diagnosed or located.
     wrong: int = 0
     abstained: int = 0
 
     @property
+    def named_right(self) -> int:
+        return self.right + self.located
+
+    @property
     def total(self) -> int:
-        return self.right + self.wrong + self.abstained
+        return self.named_right + self.wrong + self.abstained
 
 
 class ServiceScore(BaseModel):
@@ -51,6 +70,7 @@ class ServiceScore(BaseModel):
     abstentions: dict[str, int]
     # Abstentions where the second answer still named the right service.
     right_service_when_abstained: int
+    deepest_baseline: float
     majority_service: str
     majority_baseline: float
     first_error_baseline: float
@@ -60,9 +80,32 @@ class ServiceScore(BaseModel):
 
 
 def outcome(result: IncidentResult, expected: str) -> str:
-    if result.category == "unknown":
+    if result.category == "unknown" and not result.located:
         return "abstained"
-    return "right" if result.root_cause_service == expected else "wrong"
+    if result.root_cause_service != expected:
+        return "wrong"
+    return "located" if result.located else "right"
+
+
+def deepest_service(
+    data_dir: Path, incident_id: str, evidence: list[EvidenceItem]
+) -> str | None:
+    """The one candidate that depends on no other; None when there are several."""
+    incident = load_incident(incident_id, data_dir)
+    start = datetime.fromisoformat(incident["start_time"])
+    end = datetime.fromisoformat(incident["end_time"])
+    seen = [
+        item
+        for item in evidence
+        if item.source_type == "dependency_map"
+        or (
+            item.source_type == "log"
+            and item.timestamp is not None
+            and start <= item.timestamp <= end
+        )
+    ]
+    found = deepest(seen)
+    return found[0] if len(found) == 1 else None
 
 
 def first_error_service(data_dir: Path, incident_id: str) -> str | None:
@@ -121,7 +164,9 @@ def score(data_dir: Path, report_dir: Path, split: str) -> ServiceScore:
         if verdict == "abstained":
             abstentions[(result.abstention or "")[:70]] += 1
             right_when_abstained += result.root_cause_service == truth
-        scored.append(result.model_copy(update={"correct": verdict == "right"}))
+        scored.append(
+            result.model_copy(update={"correct": verdict in ("right", "located")})
+        )
         rows.append(
             {
                 "incident_id": result.incident_id,
@@ -136,21 +181,26 @@ def score(data_dir: Path, report_dir: Path, split: str) -> ServiceScore:
     first_error_right = sum(
         first_error_service(data_dir, i) == s for i, s in expected.items()
     )
+    evidence = load_evidence(data_dir)
+    deepest_right = sum(
+        deepest_service(data_dir, i, evidence) == s for i, s in expected.items()
+    )
     total = counts.total
-    answered = counts.right + counts.wrong
+    answered = counts.named_right + counts.wrong
     return ServiceScore(
         model=report.get("model"),
         commit=report.get("commit"),
         split=split,
         counts=counts,
-        accuracy=round(counts.right / total, 3),
-        interval=wilson(counts.right, total),
+        accuracy=round(counts.named_right / total, 3),
+        interval=wilson(counts.named_right, total),
         family_interval=family_interval(scored),
-        precision=round(counts.right / answered, 3) if answered else None,
+        precision=round(counts.named_right / answered, 3) if answered else None,
         by_fault=dict(sorted(by_fault.items())),
         by_service=dict(sorted(by_service.items())),
         abstentions=dict(abstentions.most_common()),
         right_service_when_abstained=right_when_abstained,
+        deepest_baseline=round(deepest_right / total, 3),
         majority_service=majority,
         majority_baseline=round(majority_count / total, 3),
         first_error_baseline=round(first_error_right / total, 3),
@@ -173,8 +223,9 @@ def markdown(result: ServiceScore) -> str:
         "",
         "| | Result |",
         "|---|---|",
-        f"| Right service | {c.right} of {c.total}, {percent(result.accuracy)} "
-        f"({percent(result.interval[0])} to {percent(result.interval[1])}) |",
+        f"| Named the right service | {c.named_right} of {c.total}, "
+        f"{percent(result.accuracy)} ({percent(result.interval[0])} to "
+        f"{percent(result.interval[1])}) |",
     ]
     if result.family_interval:
         low, high = result.family_interval
@@ -182,20 +233,27 @@ def markdown(result: ServiceScore) -> str:
             f"| Interval counting families | {percent(low)} to {percent(high)} |"
         )
     lines += [
-        f"| Wrong service | {c.wrong} |",
+        f"| - with a diagnosed cause | {c.right} |",
+        f"| - located, cause unexplained | {c.located} |",
+        f"| Named a wrong service | {c.wrong} |",
         f"| Abstained | {c.abstained} (named the right service anyway in "
         f"{result.right_service_when_abstained}) |",
-        "| Right when it answered | "
+        "| Right when it named a service | "
         + (f"{percent(result.precision)} |" if result.precision is not None else "- |"),
+        f"| Baseline: the deepest service with a new error | "
+        f"{percent(result.deepest_baseline)} |",
         f"| Baseline: always {result.majority_service} | "
         f"{percent(result.majority_baseline)} |",
         f"| Baseline: first error's service | {percent(result.first_error_baseline)} |",
         "",
-        "| By | Right | Wrong | Abstained |",
-        "|---|---|---|---|",
+        "| By | Diagnosed right | Located right | Wrong | Abstained |",
+        "|---|---|---|---|---|",
     ]
     for name, group in [*result.by_fault.items(), *result.by_service.items()]:
-        lines.append(f"| {name} | {group.right} | {group.wrong} | {group.abstained} |")
+        lines.append(
+            f"| {name} | {group.right} | {group.located} | {group.wrong} | "
+            f"{group.abstained} |"
+        )
     if result.abstentions:
         lines += ["", "Abstentions:", ""]
         lines += [f"- {n}: {reason}" for reason, n in result.abstentions.items()]
