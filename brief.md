@@ -1496,3 +1496,49 @@ Decisions this leaves, none taken yet:
 3. The scoring code's design note gives rules for telling kinds of fault apart, some with thresholds its authors measured on labelled cases of the whole set, which includes our held-out cases. It was read in this phase. Proposed: the scoring rules are part of the task and are used; the thresholds are not used unless the final report says so.
 
 The split of phase 0 stands: nothing was changed after it, and from here on it is not redrawn.
+
+### Phase 2 plan, written 2026-11-12 before any signal was measured against an answer
+
+Development cases only (100). The question is what each fault looks like in the telemetry, and how much of the answer is visible at all. Nothing here becomes a rule; the numbers are for phase 4.
+
+**Signals.** Each is computed per service, comparing the abnormal window with the normal one, with counts turned into rates per minute because the windows differ in length. Each ranks the services of a case, highest first.
+
+| | Signal | Score for a service |
+|---|---|---|
+| T1 | Error share | Share of its spans with an error status, abnormal minus normal |
+| T2 | Latency | p95 span duration, abnormal over normal |
+| T3 | Own time | p95 of span duration minus its direct children's durations, abnormal over normal |
+| T4 | Trace silence | 1 minus its span rate abnormal over normal; 1 if it has no spans in the abnormal window |
+| L1 | Error logs | (ERROR and WARN lines per minute + 1), abnormal over normal |
+| L2 | Log silence | As T4, for log lines |
+| M1 | Loudest metric | Largest absolute shift of any of its metrics' means, in normal standard deviations |
+| B0 | Commonest root | The root service seen most often in the other development cases of the same system (no telemetry) |
+
+**Measures**, per system and together:
+
+- Top 1 and top 3: a required fault's service is first, or within the first three. A service counts as a fault's service under the scoring rules (the label's service, `also_accept`, and either end of a network fault's link).
+- For cases with more than one required fault: the rank of each, and whether all are within the first k, where k is the number of required faults.
+- By kind of fault: top 3 for each signal, to see which signal shows which kind.
+- Visibility: a required fault's service is called visible on a signal when T1 ≥ 0.05, T2 ≥ 1.5, T3 ≥ 1.5, T4 ≥ 0.5, L1 ≥ 2, L2 ≥ 0.5 or M1 ≥ 3. These cut-offs are set now and not changed after seeing results; they say what is seen, not what is decided. The reachable ceiling is the share of required faults visible on at least one signal, and the share of cases with every required fault visible. Faults whose service never appears in any table are counted apart.
+- The same visibility for optional and not-effective faults, since naming those costs or gains nothing or costs precision.
+
+**Leak check.** Every text column is searched for words from fault injection tooling (chaos, inject, fault, stress, mutator and the like), namespaces and pod names are listed, and the parquet files' own metadata is read. Anything that names an injected service other than through the system's own behaviour is a leak, reported and then hidden from agents.
+
+**Not measured in this phase:** when each service's anomaly began, and any combination of signals. Both are candidates for phase 4.
+
+### Phase 2, done 2026-11-12: what the development cases show
+
+The full account is `docs/openrca2-data.md`; the tables come from `python -m flowguard.openrca2.study` (`reports/openrca2-phase2`). Development cases only. Three measures were added after the first run, and are marked as such: the same measures for services with no fault, how high optional and not-effective faults rank, and where each signal's first service sits.
+
+- **No leak was found.** No text column holds a word from the injection tooling, and the files carry no other metadata. Namespaces are weakly linked to campaigns and should be hidden from agents.
+- **The service is nearly always findable, by some signal.** Some signal puts a required fault's service in its first three in 99 of 100 cases, and first in 86 (17% for a service with no fault). No single signal does better than 60% in the first three. Which signal shows a fault follows its kind: latency and own time for network faults, error share and error logs for HTTP and exception faults, silence and metrics for pod faults.
+- **Systems differ.** Silence is the best signal in Hotel Reservation and points somewhere unrelated in TrainTicket; error share is the reverse. OTel Demo's 7 cases settle nothing.
+- **Optional and not-effective faults look as faulty as required ones**: some signal ranks every optional fault first, and 79% of the not-effective ones. Whether to name a fault turns on whether its effect spread beyond its service, which is the label's own definition. This is where exact match is decided.
+- **Wrong first picks are often downstream**: TrainTicket's entry service under latency, Hotel Reservation's frontend under error share and error logs.
+- **The visibility cut-offs set in the plan don't separate**: they pass 84% of services with no fault. They are kept as written and reported as too loose.
+- **Only 4 development cases have two required faults**, and in each both services are in some signal's first two.
+- **A dataset prior exists**: `search` is the root in 17 of 33 Hotel Reservation cases. It is a baseline, not a rule.
+
+The scorer drafted in this phase (`openrca2/score.py`) makes the README's roles concrete: a left-over claim naming an optional fault is set aside, counting neither for nor against; a claim naming a not-effective fault is a wrong claim; the other end of a network link is read from `injection.json`, as the official code does, since the label lists containers and Hotel Reservation's container names differ from its service names. It waits for the user's review before any agent's answer is scored with it.
+
+Not measured, and candidates for phase 4: when each anomaly began, how often similar kinds of fault can be told apart, and any combination of signals.

@@ -6,14 +6,20 @@ file, no other case, no folder above the case. The answers are kept in another
 folder as well (see prepare.py); this is the second barrier, for a mistake or a
 path a model makes up.
 
-It covers paths that Python code opens. A query engine that can read files named
-inside a query has to have that turned off where the engine is set up.
+For SQL, `connect` gives a DuckDB connection with one view per table, named
+after its file (`abnormal_traces`), that can read those ten files and nothing
+else: DuckDB's external access is turned off with the ten paths as the only
+exceptions, and the configuration is locked so a query cannot turn it back on.
 """
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flowguard.openrca2 import TELEMETRY_FILES
+
+if TYPE_CHECKING:
+    import duckdb
 
 CASE_ID = re.compile(r"case-\d{3,}")
 HELD_OUT = "held-out"
@@ -64,3 +70,28 @@ class CaseTelemetry:
         ):
             raise NotAllowed(f"not a telemetry file: {name!r}")
         return file
+
+    def connect(self) -> "duckdb.DuckDBPyConnection":
+        """An in-memory DuckDB connection that can read this case's ten tables only.
+
+        Each table is a view named after its file without `.parquet`. Any other
+        file, a glob, ATTACH, COPY, an extension, or changing a setting fails.
+        """
+        import duckdb
+
+        paths = {name: self.path(name).as_posix() for name in self.tables()}
+        con = duckdb.connect(":memory:")
+        allowed = ", ".join(_quote(path) for path in paths.values())
+        con.execute(f"SET allowed_paths = [{allowed}]")
+        con.execute("SET enable_external_access = false")
+        con.execute("SET lock_configuration = true")
+        for name, path in paths.items():
+            view = name.removesuffix(".parquet")
+            con.execute(
+                f"CREATE VIEW {view} AS SELECT * FROM read_parquet({_quote(path)})"
+            )
+        return con
+
+
+def _quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"

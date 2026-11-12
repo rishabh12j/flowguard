@@ -331,3 +331,74 @@ class TestRealData:
         for name in ANSWER_FILES:
             assert not list((REAL / "raw").rglob(name))
             assert not list((REAL / "telemetry").rglob(name))
+
+
+# SQL: the locked DuckDB connection.
+
+
+@pytest.fixture
+def parquet_root(tmp_path: Path) -> Path:
+    pq = pytest.importorskip("pyarrow.parquet")
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    for split, case_id in (
+        ("dev", "case-001"),
+        ("dev", "case-002"),
+        ("held-out", "case-003"),
+    ):
+        folder = tmp_path / "telemetry" / split / case_id
+        folder.mkdir(parents=True)
+        for name in TELEMETRY_FILES:
+            pq.write_table(
+                pa.table({"case": [case_id], "table": [name]}), folder / name
+            )
+        answers = tmp_path / "answers" / split / case_id
+        answers.mkdir(parents=True)
+        for name in ANSWER_FILES:
+            (answers / name).write_text('{"faults": ["secret"]}', encoding="utf-8")
+        pq.write_table(pa.table({"secret": [1]}), answers / "label.parquet")
+    return tmp_path
+
+
+def test_the_connection_has_one_view_per_table(parquet_root: Path) -> None:
+    con = CaseTelemetry(parquet_root / "telemetry" / "dev", "case-001").connect()
+    for name in TELEMETRY_FILES:
+        view = name.removesuffix(".parquet")
+        assert con.execute(f"SELECT * FROM {view}").fetchall() == [("case-001", name)]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM read_json_auto('{answers}/label.json')",
+        "SELECT * FROM read_text('{answers}/label.json')",
+        "SELECT * FROM read_parquet('{answers}/label.parquet')",
+        "SELECT * FROM '{answers}/label.parquet'",
+        "SELECT * FROM read_parquet('{other}/normal_logs.parquet')",
+        "SELECT * FROM read_parquet('{case}/../case-002/normal_logs.parquet')",
+        "SELECT * FROM read_parquet('{root}/telemetry/held-out/case-003/normal_logs.parquet')",
+        "SELECT * FROM glob('{root}/**')",
+        "ATTACH '{root}/x.db'",
+        "COPY (SELECT 1) TO '{root}/out.csv'",
+        "INSTALL httpfs",
+        "SET enable_external_access = true",
+        "SET allowed_paths = ['{answers}/label.json']",
+        "SET lock_configuration = false",
+    ],
+)
+def test_the_connection_reads_nothing_else(parquet_root: Path, query: str) -> None:
+    import duckdb
+
+    root = parquet_root.as_posix()
+    filled = query.format(
+        root=root,
+        case=f"{root}/telemetry/dev/case-001",
+        other=f"{root}/telemetry/dev/case-002",
+        answers=f"{root}/answers/dev/case-001",
+    )
+    con = CaseTelemetry(parquet_root / "telemetry" / "dev", "case-001").connect()
+    with pytest.raises(duckdb.Error):
+        con.execute(filled).fetchall()
+    assert (
+        not (parquet_root / "out.csv").exists() and not (parquet_root / "x.db").exists()
+    )
