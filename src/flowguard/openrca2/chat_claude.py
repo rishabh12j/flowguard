@@ -28,6 +28,7 @@ from typing import Any
 
 import anthropic
 
+from flowguard.llm.claude import claude_schema
 from flowguard.openrca2.chat import ModelFailed, ToolCall, ToolSpec, Turn, Usage
 
 # USD per million tokens, from the Claude API reference cached 2026-11-03.
@@ -104,7 +105,11 @@ class ClaudeConversation:
         self._client = client or anthropic.Anthropic(max_retries=4, timeout=600.0)
 
     def _call(
-        self, system: str, tool_choice: dict[str, str], messages: list[Any]
+        self,
+        system: str,
+        tool_choice: dict[str, str],
+        messages: list[Any],
+        schema: dict[str, Any] | None = None,
     ) -> Turn:
         body: dict[str, Any] = {
             "model": self.model,
@@ -115,6 +120,10 @@ class ClaudeConversation:
             "messages": messages,
             "cache_control": {"type": "ephemeral"},
         }
+        if schema is not None:
+            body["output_config"] = {
+                "format": {"type": "json_schema", "schema": claude_schema(schema)}
+            }
         if self.binding:
             body["thinking"] = {
                 "type": "adaptive",
@@ -195,9 +204,16 @@ class ClaudeConversation:
             }
         )
 
-    def conclude(self, system: str, prompt: str) -> Turn:
+    def conclude(
+        self, system: str | None, prompt: str, schema: dict[str, Any] | None = None
+    ) -> Turn:
         self.messages.append({"role": "user", "content": prompt})
-        return self._call(system, {"type": "none"}, without_thinking(self.messages))
+        if system is None:
+            # Same system prompt and tools: nothing before the thinking blocks changed.
+            return self._call(self.system, {"type": "none"}, self.messages, schema)
+        return self._call(
+            system, {"type": "none"}, without_thinking(self.messages), schema
+        )
 
     def transcript(self) -> list[dict[str, Any]]:
         return [dict(m) for m in self.messages]

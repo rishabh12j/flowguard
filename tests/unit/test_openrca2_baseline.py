@@ -80,7 +80,7 @@ class Scripted:
     def answer_tools(self, results: list[tuple[ToolCall, str]]) -> None:
         self.results.append(results)
 
-    def conclude(self, system: str, prompt: str) -> Turn:
+    def conclude(self, system: str | None, prompt: str, schema: Any = None) -> Turn:
         self.concluded = (system, prompt)
         return Turn(self.answer, [], Usage(prompt=200, output=50, usd=0.02), "end_turn")
 
@@ -244,7 +244,7 @@ def test_claude_cost_uses_cache_prices_and_haikus_long_prompt_price() -> None:
 
 def test_an_answer_turn_that_calls_a_tool_is_noted(case: CaseTelemetry) -> None:
     class CallsInstead(Scripted):
-        def conclude(self, system: str, prompt: str) -> Turn:
+        def conclude(self, system: str | None, prompt: str, schema: Any = None) -> Turn:
             return Turn("", [call("think_tool", reflection="more")], Usage(), "stop")
 
     run = investigate(CallsInstead([], ""), Tools(case))

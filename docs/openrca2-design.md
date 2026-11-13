@@ -122,7 +122,7 @@ Built in this order, each run on all 100 development cases and compared case by 
 - no system loses more than 2;
 - it costs no more than 10 cents a case.
 
-Eight is about twice the chance variation of a net difference over 12 disagreements. A part that doesn't qualify is removed, and the result is recorded either way. Each comparison costs about $3 to $6 on Haiku.
+Eight is about twice the chance variation of a net difference over 12 disagreements. Clarified on 2026-11-13, before any part was measured: the lead agent is the base the other parts sit on, so its result against both baseline runs is recorded and it stays either way. Every later part is judged by these thresholds against the configuration it was added to (the survey against the lead's run, and so on). A part that doesn't qualify is removed, and the result is recorded either way. Each comparison costs about $3 to $6 on Haiku.
 
 Nothing is tuned on one system alone. Every change is reported per system, and a change that helps one system while hurting another is not kept on the strength of the first.
 
@@ -140,9 +140,98 @@ Nothing is tuned on one system alone. Every change is reported per system, and a
 
 **Development target:** a version that beats the standard agent on the development cases by more than the run-to-run spread, before the held-out cases are run at all.
 
-## What phase 4 still needs from the user
+## Agreed by the user, 2026-11-13
 
-1. **Agree or change the design** above.
-2. **Agree the bar** (the test section) and the rule for keeping a part in phase 5.
-3. **Agree the scorer's rule for optional faults.** A left-over claim naming an optional fault counts neither for nor against an answer. It changed no score so far, but it will be fixed before the test.
-4. **May the agents be told where the scoring code places a fault?** For HTTP faults, the fault is counted at the caller; for network faults, at either end. This is how the answer is judged, not a threshold fitted to labels; phase 1 proposed that the scoring rules are part of the task and may be used. The standard agent was not told it, so telling ours is an advantage the bar should know about. The alternative is to leave it to the agents to infer from the telemetry, which the origin question is built to do anyway.
+The user agreed every point:
+
+- **The design**, as written above.
+- **The bar for the held-out test**, and the rule for keeping a part in phase 5.
+- **The scorer's rule for optional faults:** a left-over claim naming one counts neither for nor against an answer.
+- **That the agents may be told how the scoring code places a fault:** an HTTP fault at the calling service, a network fault at either end.
+
+The standard agent is not told this placement rule, so every report of a comparison says that ours is.
+
+## Phase 5, step 1: the lead agent and the survey, built 2026-11-13
+
+Built and checked offline, then measured on 2026-11-13 (results below).
+
+- **The agent.** `python -m flowguard.openrca2.baseline --agent lead|lead+survey` runs the design's first two parts with the same runner, tools, limits and records as the standard agent (`--agent standard`, the default). Each record notes its agent.
+- **The lead** (`openrca2/design.py`) has the standard agent's four tools and its cap of 100 calls. Its own prompt says:
+  - how answers are judged: the agreed placement rules, and that a fault is named only if its effect spread;
+  - how to work: every service first, own work against inherited, silence, telling similar kinds apart, then the path to the users;
+  - the official answer contract, from the first turn rather than only at the end.
+
+  The answer turn keeps the same system prompt, so no history is edited: the model's thinking stays valid and the cache stays warm. The answer is held to the official schema by structured output, with the 25 kinds as a fixed list.
+- **The survey** (`openrca2/survey.py`) is added to the first message. It holds:
+  - every service's rates, error share, latency, own time, log errors, largest metric shift (and which metric), restarts, new pods and onset;
+  - the calls between services that changed most;
+  - the entry services: those taking at least 5% of the load generator's calls, or, with no load generator in the traces, starting at least 25% of the traces;
+  - the network connections that changed most, where the case records them. Hubble metrics are in 46 of 60 TrainTicket development cases and in no Hotel Reservation or OTel Demo case; where they are absent, the survey says so.
+
+  It takes under a second and about 1,000 to 3,500 tokens a case.
+- **Tests** (`tests/unit/test_openrca2_design.py`):
+  - the survey, on a synthetic case with a known entry service, a failing callee, restarts, a new pod and a doubled connection;
+  - the lead's prompt and answer settings;
+  - the answer turn replaying the history untouched and sending the schema;
+  - the strict schema.
+
+**Measuring it** costs about $3 to $4 a configuration on Haiku: the standard agent's cost, plus a few cents of survey tokens, less the answer turn's cache misses. Each configuration is first run on one case, to check that structured output works with Haiku in a real request.
+
+### Results on the 100 development cases, 2026-11-13
+
+Both configurations ran on all 100 development cases on Claude Haiku 5.5, after a one-case check each (case-073, exact in both). Structured output worked in every case. The full comparison, with every miss classed, is `reports/openrca2-phase5-step1-compared.md`.
+
+| Run | Exact | Hotel Reservation | OTel Demo | TrainTicket | Cost |
+|---|---|---|---|---|---|
+| Standard agent, run 1 | 56 | 31 of 33 | 5 of 7 | 20 of 60 | $2.97 |
+| Standard agent, run 2 | 56 | 32 of 33 | 7 of 7 | 17 of 60 | $3.23 |
+| Lead | 50 | 22 of 33 | 4 of 7 | 24 of 60 | $5.06 |
+| Lead and survey | 62 | 28 of 33 | 4 of 7 | 30 of 60 | $3.46 |
+
+| Pair | Only the first right | Only the second right | Exact paired test |
+|---|---|---|---|
+| Standard run 1, lead | 19 | 13 | p = 0.38 |
+| Standard run 2, lead | 18 | 12 | p = 0.36 |
+| Lead, lead and survey | 5 | 17 | p = 0.017 |
+| Standard run 1, lead and survey | 10 | 16 | p = 0.33 |
+| Standard run 2, lead and survey | 9 | 15 | p = 0.31 |
+
+**The lead, against both baseline runs (recorded; it stays as the base).** It is 6 exact matches worse, which is within the chance spread, but its losses fall on one system: Hotel Reservation drops from 31 and 32 to 22. Three things drive this:
+
+- **The placement rule worked on HTTP faults.** Eight TrainTicket HTTP faults that both baseline runs blamed on the called service are now named at the caller and scored exact (case-073, 092, 165, 199, 256, 258, 270, 384).
+- **The same rule turned network delays into HTTP faults.** A network delay on a service's own connections slows its outgoing calls while the called services' server spans stay normal. That is the pattern the prompt describes for an HTTP fault. The lead named `http_slow` for a network delay in 8 cases: 6 at Hotel Reservation's `search`, which both baseline runs got right, 1 in OTel Demo and 1 in TrainTicket.
+- **Five answers were empty.** In 5 cases (267, 296, 352, 433, 442) the answer turn returned `{"root_causes": [], "propagation": []}`. In two of them (267 and 352), the lead's last think_tool note names the right service and kind. The other three runs have no empty answers. The cause is not known. All five had long histories at the answer turn (53K to 95K tokens), but so did most cases: 61 of the 100 were over 60K and were answered. An empty answer is never right: every case has at least one fault.
+
+The lead also cost more than the baseline ($5.06 against about $3). Fifteen cases ran past 100K prompt tokens on a turn, where Haiku's price is five times higher; they cost 11 to 27 cents each.
+
+**The survey, against the lead (kept).** It passes all three thresholds:
+
+- 12 more exact matches (17 gained, 5 lost; p = 0.017);
+- no system loses: Hotel Reservation +6, OTel Demo 0, TrainTicket +6;
+- 3.5 cents a case.
+
+Three of the 17 gains are cases where the lead's answer was empty (267, 352, 442). Without them the gain is 9 (14 against 5, p = 0.064). That still clears the threshold of 8, but the margin is thin. Where the survey helped:
+
+- It undid most of the lead's network-delay misreads in Hotel Reservation (056, 065, 337, 391). It named the delay at the other end of the connection, which counts.
+- It brought TrainTicket network faults to the right kind (120, 226, 300, 401).
+- It shortened the investigations: 62.9M prompt tokens against the lead's 86.1M.
+
+**Lead and survey, against the baseline (information only; the held-out test decides).** It is 6 exact matches ahead of both baseline runs (net +6 and +6, p about 0.3). That is not yet enough. The held-out bar was designed to detect a gain of about 4 to 5 points over 355 cases, so a 6-point gain on development is in range but not secure. Hotel Reservation is still 3 to 4 below the baseline. TrainTicket is 10 to 13 above.
+
+**What the remaining 38 misses are.** Wrong kind is 31 of them:
+
+- a network fault on a connection to MySQL read as `database_call_slow` or `database_call_failed`: 13;
+- a network delay read as `http_slow`: 3;
+- a network partition read as `dns_lookup_failed`: 2;
+- `jvm_heap_exhausted` read as `pod_failure`: 3.
+
+The rest are a wrong service (5), the entry service named instead (3) and a missed second fault (2). This is the list the kind subagent is aimed at.
+
+### Open points for the user
+
+1. **The empty answers.** There are two ways to stop the answer turn returning nothing:
+   - `minItems: 1` on `root_causes` in the answer schema. It is free and certain. It also forces a guess where the model thinks there is no fault, but every case has one, and the official contract says so.
+   - Rerun the answer turn once when it comes back empty. It keeps the schema as the official one and costs one more answer turn (about a cent) in the rare case. If the model's choice was deliberate, it may return empty again.
+
+   I recommend `minItems: 1`. The task says every case has a fault, so it adds no assumption, and the fix belongs to the client, not the reasoning. Either way it applies to the lead and survey configuration, so the next comparison uses the fixed version as its base.
+2. **Network delay against HTTP slowness at the caller.** The lead's rule for HTTP faults is right but incomplete: it says what an HTTP fault looks like, not what separates it from a delay on the caller's own network. I propose to put the separating evidence in the kind subagent's brief rather than change the lead prompt, which has already been measured. The evidence is whether every outgoing connection of the pod is slowed (any destination, any protocol, database included) or only particular HTTP routes.

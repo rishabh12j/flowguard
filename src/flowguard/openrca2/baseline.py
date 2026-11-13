@@ -41,6 +41,7 @@ import duckdb
 
 from flowguard.openrca2.access import CaseTelemetry
 from flowguard.openrca2.chat import Conversation, ModelFailed, ToolCall, ToolSpec, Usage
+from flowguard.openrca2.design import Agent, lead_agents
 from flowguard.openrca2.score import KINDS, Answer, load_truth, score, summarise
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -145,6 +146,7 @@ _EVIDENCE = {
             "claim": {"type": "string"},
         },
         "required": ["kind", "sql", "claim"],
+        "additionalProperties": False,
     },
 }
 # The official answer format (AgentRCAOutput) as a JSON schema, for --json-answer.
@@ -161,6 +163,7 @@ ANSWER_SCHEMA = {
                     "evidence": _EVIDENCE,
                 },
                 "required": ["service", "fault_kind", "evidence"],
+                "additionalProperties": False,
             },
         },
         "propagation": {
@@ -173,10 +176,12 @@ ANSWER_SCHEMA = {
                     "evidence": _EVIDENCE,
                 },
                 "required": ["from", "to", "evidence"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["root_causes", "propagation"],
+    "additionalProperties": False,
 }
 
 BUDGET_SPENT = (
@@ -397,6 +402,7 @@ def investigate(
     conversation: Conversation,
     tools: Tools,
     *,
+    agent: Agent | None = None,
     max_calls: int = MAX_CALLS,
     budget: Callable[[float], bool] | None = None,
 ) -> CaseRun:
@@ -439,10 +445,9 @@ def investigate(
             stopped = "the spending limit"
             break
 
-    today = date.today().isoformat()
+    agent = agent or agents()["standard"]
     final = conversation.conclude(
-        SYNTHESIS.format(date=today, agent_contract=agent_contract()),
-        SYNTHESIS_USER.format(incident=INCIDENT),
+        agent.answer_system, agent.answer_prompt, agent.answer_schema
     )
     turns += 1
     add(final.usage)
@@ -465,6 +470,23 @@ def investigate(
         stopped,
         per_turn,
     )
+
+
+def agents() -> dict[str, Agent]:
+    """Every agent the runner can run: the standard one, and the design's parts."""
+    today = date.today().isoformat()
+    standard = Agent(
+        "standard",
+        INVESTIGATION.format(date=today) + "\n" + REFLECTION,
+        lambda case: INCIDENT,
+        SYNTHESIS.format(date=today, agent_contract=agent_contract()),
+        SYNTHESIS_USER.format(incident=INCIDENT),
+        None,
+    )
+    return {
+        "standard": standard,
+        **lead_agents(INCIDENT, agent_contract(), ANSWER_SCHEMA),
+    }
 
 
 def within(spent: float, limit: float | None) -> Callable[[float], bool] | None:
@@ -555,6 +577,12 @@ def main() -> int:
         help="Claude: write each request body to <dir>/<case>.jsonl, for prefix_diff.py",
     )
     parser.add_argument(
+        "--agent",
+        choices=("standard", "lead", "lead+survey"),
+        default="standard",
+        help="the standard agent, or the design's parts (docs/openrca2-design.md)",
+    )
+    parser.add_argument(
         "--json-answer",
         action="store_true",
         help="local models: hold the answer turn to the official JSON schema, so it cannot call a tool",
@@ -587,7 +615,7 @@ def main() -> int:
         args.json_answer,
     )
     args.out.mkdir(parents=True, exist_ok=True)
-    system = INVESTIGATION.format(date=date.today().isoformat()) + "\n" + REFLECTION
+    agent = agents()[args.agent]
     # What earlier runs into this folder spent, failed cases included.
     spent = sum(
         json.loads(p.read_text(encoding="utf-8"))["usage"]["usd"]
@@ -605,12 +633,14 @@ def main() -> int:
             break
         truth = load_truth(args.root / "answers" / "dev", case_id)
         tools = Tools(CaseTelemetry(args.root / "telemetry" / "dev", case_id))
-        conversation = new(system, INCIDENT, case_id)
+        case = CaseTelemetry(args.root / "telemetry" / "dev", case_id)
+        conversation = new(agent.system, agent.first(case), case_id)
         limit = args.max_usd
         try:
             run = investigate(
                 conversation,
                 tools,
+                agent=agent,
                 max_calls=args.max_calls,
                 budget=within(spent, limit),
             )
@@ -648,6 +678,7 @@ def main() -> int:
             "case": case_id,
             "system": truth.system,
             "model": f"{args.provider}:{args.model}",
+            "agent": agent.name,
             "json_answer": args.json_answer,
             "num_ctx": args.num_ctx if args.provider == "ollama" else None,
             "stopped": run.stopped,

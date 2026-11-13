@@ -1587,3 +1587,20 @@ Update 2026-11-13: the standard agent ran on all 100 development cases twice, on
 - **Misses**, 44 a run: the right service with the wrong kind in 31 to 32, most of them a network fault on the link to MySQL called a database fault. The wrong service in 9 to 10, mostly an HTTP fault blamed on the called service, where the scoring code counts the caller.
 
 The design note now targets these, adds per-connection network metrics and restart signs to the survey, and fixes the rule for keeping a part in phase 5: at least 8 more exact matches than each baseline run, and no system losing more than 2. The comparison is reproduced by `python -m flowguard.openrca2.failures`.
+
+### Phase 4, agreed 2026-11-13
+
+The user agreed the design (`docs/openrca2-design.md`), the bar and the rule for keeping a part in phase 5. The scorer's rule for optional faults is now fixed: a left-over claim naming one counts neither for nor against. The agents may be told how the scoring code places a fault (an HTTP fault at the caller, a network fault at either end), and every comparison with the standard agent says so. Phase 5 begins.
+
+### Phase 5, step 1, built 2026-11-13: the lead agent and the survey
+
+The design's first two parts are built and checked offline: `--agent lead` and `--agent lead+survey` (`docs/openrca2-design.md`, "Phase 5, step 1"). Before any part was measured, the rule for keeping a part was made precise. The lead's result against both baseline runs is recorded, and it stays as the base either way; each later part is judged against the configuration it was added to. Each configuration runs on one case first, then on all 100 development cases, at about $3 to $4 each.
+
+### Phase 5, step 1, measured 2026-11-13
+
+Measured on the 100 development cases on Haiku (`docs/openrca2-design.md`, "Results on the 100 development cases"):
+
+- **Lead:** 50 exact against the baseline's 56 and 56. The placement rule fixed 8 HTTP faults, but turned network delays at the caller into `http_slow`, mainly in Hotel Reservation (22 of 33, against 31 and 32). Five answers came back empty. As agreed, the lead stays as the base.
+- **Lead and survey:** 62 exact. Against the lead, it gained 17 and lost 5 (p = 0.017), with no system worse off, at 3.5 cents a case. The survey passes the keep rule and stays.
+
+Against the baseline, lead and survey is 6 ahead (p about 0.3). That gain is not yet secure, and Hotel Reservation is still 3 to 4 below. Two points wait on the user: how to stop empty answers (`minItems: 1` recommended), and putting the network-delay against HTTP evidence in the kind subagent rather than the lead prompt.

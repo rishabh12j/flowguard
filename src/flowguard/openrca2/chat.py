@@ -55,8 +55,14 @@ class Conversation(Protocol):
         """Give the model the results of the calls of its last turn."""
         ...
 
-    def conclude(self, system: str, prompt: str) -> Turn:
-        """One last turn on the whole history, with another system prompt and no tool calls."""
+    def conclude(
+        self, system: str | None, prompt: str, schema: dict[str, Any] | None = None
+    ) -> Turn:
+        """One last turn on the whole history, with no tool calls.
+
+        `system` replaces the system prompt for this turn; None keeps it. `schema`
+        holds the answer to a JSON schema.
+        """
         ...
 
     def transcript(self) -> list[dict[str, Any]]:

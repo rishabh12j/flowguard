@@ -63,7 +63,9 @@ class OllamaConversation:
         self._http = httpx.Client(base_url=host, timeout=timeout, transport=transport)
         self._count = 0
 
-    def _call(self, tools: bool, answer: bool = False) -> Turn:
+    def _call(
+        self, tools: bool, answer: bool = False, schema: dict[str, Any] | None = None
+    ) -> Turn:
         body: dict[str, Any] = {
             "model": self.model,
             "messages": self.messages,
@@ -72,8 +74,8 @@ class OllamaConversation:
         }
         if tools:
             body["tools"] = self.tools
-        if answer and self.answer_format is not None:
-            body["format"] = self.answer_format
+        if answer and (schema or self.answer_format) is not None:
+            body["format"] = schema or self.answer_format
         # As the paper's harness, a failed request is retried, up to 5 times. Ollama
         # answers 500 when it cannot parse what the model wrote (a malformed tool
         # call); at a temperature above 0 a new sample usually parses.
@@ -142,10 +144,13 @@ class OllamaConversation:
                 {"role": "tool", "content": result, "tool_name": call.name}
             )
 
-    def conclude(self, system: str, prompt: str) -> Turn:
-        self.messages[0] = {"role": "system", "content": system}
+    def conclude(
+        self, system: str | None, prompt: str, schema: dict[str, Any] | None = None
+    ) -> Turn:
+        if system is not None:
+            self.messages[0] = {"role": "system", "content": system}
         self.messages.append({"role": "user", "content": prompt})
-        return self._call(tools=False, answer=True)
+        return self._call(tools=False, answer=True, schema=schema)
 
     def transcript(self) -> list[dict[str, Any]]:
         return list(self.messages)
