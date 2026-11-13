@@ -270,3 +270,48 @@ def test_the_other_end_of_a_link_is_read_from_the_injection(tmp_path: Path) -> N
     )
     truth = load_truth(root, "case-008")
     assert score(answer(("rate", "network_delay")), truth)["acc"] == 1.0
+
+
+def test_failures_class_each_kind_of_miss(tmp_path: Path) -> None:
+    from flowguard.openrca2.failures import classify, paired_p
+
+    faults = [
+        fault("ts-preserve-service", "HTTPRequestAbort"),
+        fault("ts-basic-service", "JVMRuntimeMutator", role="not_effective"),
+        fault("ts-food-service", "CPUStress", role="optional"),
+    ]
+    edges = [
+        ["ts-preserve-service", "ts-seat-service"],
+        ["ts-seat-service", "ts-ui-dashboard"],
+    ]
+    truth = load_truth(
+        write_case(tmp_path, "dev", "case-009", faults, edges, []), "case-009"
+    )
+    assert classify(None, truth) == ["invalid answer"]
+    assert (
+        classify(
+            answer(("ts-preserve-service", "http_aborted"), ("ts-food-service", "cpu")),
+            truth,
+        )
+        == []
+    )
+    assert classify(answer(("ts-preserve-service", "network_partition")), truth) == [
+        "wrong kind: http_aborted -> network_partition"
+    ]
+    assert classify(answer(("ts-seat-service", "http_aborted")), truth) == [
+        "missed a required fault",
+        "named instead: a service on the true graph",
+    ]
+    assert classify(
+        answer(
+            ("ts-preserve-service", "http_aborted"),
+            ("ts-basic-service", "wrong_return_value"),
+            ("ts-ui-dashboard", "http_slow"),
+        ),
+        truth,
+    ) == [
+        "extra claim: a not-effective fault",
+        "named instead: an entry service",
+    ]
+    assert paired_p(6, 6) == 1.0 and paired_p(0, 0) == 1.0
+    assert paired_p(10, 0) == pytest.approx(2 / 1024)

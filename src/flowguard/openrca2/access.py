@@ -71,11 +71,16 @@ class CaseTelemetry:
             raise NotAllowed(f"not a telemetry file: {name!r}")
         return file
 
-    def connect(self) -> "duckdb.DuckDBPyConnection":
+    def connect(
+        self, *, underscore_columns: bool = False
+    ) -> "duckdb.DuckDBPyConnection":
         """An in-memory DuckDB connection that can read this case's ten tables only.
 
         Each table is a view named after its file without `.parquet`. Any other
         file, a glob, ATTACH, COPY, an extension, or changing a setting fails.
+        With `underscore_columns`, dots in column names become underscores
+        (`attr.status_code` is `attr_status_code`), as the standard agent's
+        tools show them.
         """
         import duckdb
 
@@ -87,11 +92,23 @@ class CaseTelemetry:
         con.execute("SET lock_configuration = true")
         for name, path in paths.items():
             view = name.removesuffix(".parquet")
-            con.execute(
-                f"CREATE VIEW {view} AS SELECT * FROM read_parquet({_quote(path)})"
-            )
+            source = f"read_parquet({_quote(path)})"
+            columns = "*"
+            if underscore_columns:
+                names = [
+                    d[0]
+                    for d in con.execute(f"SELECT * FROM {source} LIMIT 0").description
+                ]
+                columns = ", ".join(
+                    f"{_ident(c)} AS {_ident(c.replace('.', '_'))}" for c in names
+                )
+            con.execute(f"CREATE VIEW {view} AS SELECT {columns} FROM {source}")
         return con
 
 
 def _quote(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
+
+
+def _ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'

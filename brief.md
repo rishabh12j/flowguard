@@ -1542,3 +1542,48 @@ The full account is `docs/openrca2-data.md`; the tables come from `python -m flo
 The scorer drafted in this phase (`openrca2/score.py`) makes the README's roles concrete: a left-over claim naming an optional fault is set aside, counting neither for nor against; a claim naming a not-effective fault is a wrong claim; the other end of a network link is read from `injection.json`, as the official code does, since the label lists containers and Hotel Reservation's container names differ from its service names. It waits for the user's review before any agent's answer is scored with it.
 
 Not measured, and candidates for phase 4: when each anomaly began, how often similar kinds of fault can be told apart, and any combination of signals.
+
+### Phase 3, in progress 2026-11-12: the standard agent, rebuilt
+
+`python -m flowguard.openrca2.baseline` rebuilds the leaderboard's agent from the paper's prompts (appendix F.4), the official answer contract and the co-author's tools, on the locked connection. Its known differences and checks are in `docs/openrca2-baseline.md`. The ten development cases are drawn with seed `20261112`: six TrainTicket, three Hotel Reservation and one OTel Demo.
+
+Two local runs on one case with `gpt-oss:20b` checked the whole path. Capped at 6 calls, the model asked for a tool at the answer turn and gave no answer, which scores 0, as the paper's harness would. Capped at 20 calls, it named the right service with the wrong kind of fault. The history grows by about 700 tokens a call. Measured afterwards, the laptop loads this model with a 128K context, which holds a whole case; an earlier claim that 32K was the limit was wrong.
+
+Cost estimate for ten cases: Claude Haiku 5.5 $0.40 to $1.20, Sonnet 5.5 $6 to $18, Sonnet 5 $7 to $23 (the only one with a leaderboard row, on the old data), Opus 5.5 $12 to $35. No paid run has been made; the model and its limit wait for the user's approval.
+
+Update, same day. The user's first paid run (Sonnet 5.5, $5 limit) failed every case on the history check for thinking blocks, before any case was scored. The client was fixed (`docs/openrca2-baseline.md`), and a one-case probe at $0.115 passed the check. On that case Sonnet named the right service and edge with the wrong kind of fault (`network_delay` for `http_response_body_corrupted`), as the local model had (`application_exception`). The probe raised the Sonnet 5.5 estimate to $12 to $30 for ten cases.
+
+### Phase 3, done 2026-11-12: the standard agent measured
+
+The standard agent on Claude Haiku 5.5, on the ten sampled development cases, made 7 exact matches. Any-hit was 0.90, edge-F1 0.81 and path-acc 0.67. It cost about $0.026 and 70 seconds a case (`docs/openrca2-baseline.md`, `reports/openrca2-baseline-haiku`).
+
+- **The interval for 7 of 10** runs from 40% to 89%. Under the public scorer's rule, every injected fault required, it is 60%. None of this compares with the published rows, which are on the older data.
+- **Misses.** One wrong service (OTel Demo), and twice the same wrong kind: a network partition to the database read as failing database calls.
+- **The local model.** `gpt-oss:20b` was ten times slower and weaker on the cases it finished, so a local model has no role in the baseline. The user chose Haiku for paid runs at this price.
+
+What phase 4 starts from:
+
+1. The standard agent is already strong on these cases, so the bar is high. A design has to beat it on the same cases, with the same scorer and the same model.
+2. Where points were lost: telling similar kinds of fault apart, one system with few cases (OTel Demo), and, from phase 2, not naming faults whose effect didn't spread.
+3. Haiku runs cost cents, so the development set can be run whole, and runs repeated to measure their spread.
+
+### Phase 4, proposed 2026-11-12, waiting for the user's review
+
+The proposal is in `docs/openrca2-design.md`. Its parts:
+
+- **A code survey of each case:** the call graph, the entry services, the phase 2 signals for every service, and when each service's deviation began. It is a hint, never a limit on the answer.
+- **A lead agent** that plans and writes the answer under structured output.
+- **Subagents with fresh contexts**, each answering one kind of question: did this service's own work go wrong; which kind of fault is it; and does its effect spread, and by what path.
+- **A code checker** that reports claims that don't hold (queries, services, edges, a path to an entry service) back to the lead once, without deciding for it.
+
+All model parts use Claude Haiku 5.5, as the baseline did. Phase 5 adds the parts one at a time, each kept only if it beats the baseline's run-to-run spread on the 100 development cases.
+
+The proposed bar: one held-out run each of the design and the standard agent, both on Haiku. The design passes if its exact match is higher and an exact paired test gives p < 0.05. The published rows are a reference only. Before the design is fixed, the standard agent runs on all 100 development cases twice (about $5) to rank the failure classes and measure the spread.
+
+Update 2026-11-13: the standard agent ran on all 100 development cases twice, on Haiku ($2.97 and $3.23).
+
+- **Exact match** was 56 of 100 both times (38 and 35 under the public scorer's rule). The runs agreed on 88 cases and flipped 6 each way.
+- **By system:** Hotel Reservation 31 and 32 of 33, OTel Demo 5 and 7 of 7, TrainTicket 20 and 17 of 60.
+- **Misses**, 44 a run: the right service with the wrong kind in 31 to 32, most of them a network fault on the link to MySQL called a database fault. The wrong service in 9 to 10, mostly an HTTP fault blamed on the called service, where the scoring code counts the caller.
+
+The design note now targets these, adds per-connection network metrics and restart signs to the survey, and fixes the rule for keeping a part in phase 5: at least 8 more exact matches than each baseline run, and no system losing more than 2. The comparison is reproduced by `python -m flowguard.openrca2.failures`.
