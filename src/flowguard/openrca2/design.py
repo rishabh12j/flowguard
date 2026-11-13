@@ -12,6 +12,9 @@ and kept only if it passes the rule written there.
 3. `lead+survey+kind`: the same, and its answer is a draft. A subagent tests the
    kind of each fault in it (subagents.py), and the lead answers again if any
    disagrees.
+4. `lead+survey+spread` and `lead+survey+kind+spread`: a subagent also traces how
+   each fault's effect travelled, and the lead answers again if the edges it
+   finds differ from the draft's.
 
 The prompt draws on the task's official texts (the answer contract and the
 dataset's README) and on how each kind of fault works. Nothing in it is fitted to
@@ -80,6 +83,7 @@ class Agent:
     answer_prompt: str
     answer_schema: dict[str, Any] | None
     kind_check: bool = False  # a subagent tests the kind of each fault in the answer
+    spread_check: bool = False  # a subagent traces how each fault's effect travelled
 
 
 def lead_agents(
@@ -98,5 +102,24 @@ def lead_agents(
         ),
         "lead+survey+kind": Agent(
             "lead+survey+kind", system, with_survey, None, LEAD_ANSWER, schema, True
+        ),
+        "lead+survey+spread": Agent(
+            "lead+survey+spread",
+            system,
+            with_survey,
+            None,
+            LEAD_ANSWER,
+            schema,
+            spread_check=True,
+        ),
+        "lead+survey+kind+spread": Agent(
+            "lead+survey+kind+spread",
+            system,
+            with_survey,
+            None,
+            LEAD_ANSWER,
+            schema,
+            True,
+            True,
         ),
     }

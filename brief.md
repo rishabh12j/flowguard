@@ -1616,3 +1616,12 @@ The user decided three points (`docs/openrca2-design.md`, "Decided by the user, 
 ### Phase 5, step 2, built 2026-11-13: the kind check
 
 The first subagent is built and checked offline: `--agent lead+survey+kind`. Code sends each fault of the lead's draft to a subagent in a fresh context. The subagent tries to disprove the claimed kind, using the contract's rules and a section on telling kinds apart by the scope of what is affected. The lead sees the findings and has the last word. Each record keeps the draft and the checks, so the effect is read case by case. It is measured on the 100 development cases against lead and survey, at about $5 to $7 (`docs/openrca2-design.md`, "Phase 5, step 2").
+
+### The plan to the end, agreed 2026-11-13
+
+A limit of $100 and 7 days from 2026-11-13 (`docs/openrca2-design.md`, "The plan to the end"). The remaining parts are measured one a day, then the held-out test runs on day 5 at the latest, with $40 set aside for it first. Before any of them is measured, the user agreed keep rules for the parts exact match can't judge:
+
+- the spread check and the checker stay on a rise in edge-F1 of at least 0.05, with no fewer exact matches;
+- the origin check stays if it fixes half of its target misses and breaks no more than 2.
+
+The spread check is built: `--agent lead+survey+spread`, or `lead+survey+kind+spread`. Code lists every call route up from a fault, and a subagent decides with evidence which links carried its effect. Lead and survey's edge errors are almost all missing edges (102 missed against 20 extra).

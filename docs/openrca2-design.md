@@ -280,3 +280,80 @@ Built and checked offline; not yet run on any case. The user chose, from the tra
 **The risk**, stated before measuring: a second opinion on the 62 drafts that are already right can talk the lead out of some of them. The report's table shows how many.
 
 **Measuring it.** Each check adds about 0.5 to 1.5 cents: a 3,300-token system prompt, the survey, and about 10 calls with most of the history read from cache. The lead's second answer, when needed, adds under a cent. Expected cost: 4.5 to 6 cents a case, $5 to $7 for the 100 cases. It stays if, against lead and survey (62), it has at least 8 more exact matches, no system loses more than 2, and it costs at most 10 cents a case. Then the check before the held-out test also applies to whatever configuration is final.
+
+## The plan to the end, agreed 2026-11-13
+
+The user set a limit of $100 and 7 days from 2026-11-13. Within that, all remaining parts are built, in order of expected value, then the held-out test is run.
+
+### Keep rules for the remaining parts, fixed before any of them is measured
+
+Exact match cannot judge the remaining parts. The spread check and the checker mostly change the propagation edges, which exact match does not score. The origin check aims at about 10 remaining misses, too few to gain 8 net. So, agreed by the user:
+
+| Part | It stays if, against the configuration it was added to |
+|---|---|
+| Kind check | at least 8 more exact matches; no system loses more than 2; at most 10 cents a case (the original rule) |
+| Spread check | mean edge-F1 rises by at least 0.05; no fewer exact matches; no system loses more than 2 exact matches; at most 10 cents a case |
+| Checker | the same as the spread check |
+| Origin check | it fixes at least half of its target misses (another service named, the entry service named, a second fault missed) and breaks no more than 2 exact matches; at most 10 cents a case |
+
+Edge-F1 is the mean over the cases whose graph is scored (95 of the 100). The comparison report now prints it for each run, and, for a run with checks, for the drafts and the final answers.
+
+### The check before the held-out test
+
+Unchanged from "Decided by the user, 2026-11-13": on the development cases, the final configuration must be no more than 2 exact matches below both baseline runs on every system. What to do if no configuration passes it by day 5 is left open, and will be asked only if it happens.
+
+### Budget
+
+| Item | Limit |
+|---|---|
+| Kind check, smoke test and 100 cases | $8 |
+| Spread check, 100 cases | $8 |
+| Checker, 100 cases | $8 |
+| Origin check, 100 cases | $8 |
+| Held-out test: the standard agent (about $12) and the final design (about $25), with retries; set aside first | $40 |
+| Reserve: one repair run, or overruns | $28 |
+| **Total** | **$100** |
+
+Spent since 2026-11-13, when the limit was set: $0.00. Each run's `--max-usd` is set to its line here.
+
+### Schedule
+
+| Day | Runs | Work |
+|---|---|---|
+| 1 | Kind check | Spread check built |
+| 2 | Spread check | Analysis; checker built |
+| 3 | Checker | Analysis; origin check and the held-out runner built |
+| 4 | Origin check | Analysis; the check before the held-out test; the final configuration chosen |
+| 5 | Held-out test, both agents, split across terminals | |
+| 6 | | Results and write-up |
+| 7 | Spare | |
+
+A part not measured by the end of day 4 is dropped, and recorded as not built. The held-out test starts on day 5 at the latest.
+
+## Phase 5, step 3: the spread check, built 2026-11-13
+
+Built and checked offline; not yet run on any case.
+
+**What it targets.** On lead and survey, edge errors are almost all missing edges: 102 missed against 20 extra, and none reversed. Of the 59 exact cases with a scored graph, 13 still have edges that differ from the label's. In the cases read, the label counts every call link the effect travelled, toward the users. The lead gives one chain and stops. Two examples of what it leaves out:
+
+- a direct call that skips a service on another route (TrainTicket: `ts-travel2-service` → `ts-ui-dashboard` beside the route through `ts-route-plan-service`);
+- the other callees of a service whose network was at fault (Hotel Reservation: `geo` → `search` beside `rate` → `search`).
+
+**How it works.** Run with `--agent lead+survey+spread`, or `--agent lead+survey+kind+spread` if the kind check is kept.
+
+- **Routes, by code.** For each fault of the draft (up to 3), code lists the call links the fault's effect could travel. These are the links from the services the faulty service calls, then every caller route up to the entry services. Each link shows its calls a minute, error share and p95, normal against incident (`subagents.routes`, from the survey's call table). The list is a starting point, not a limit: the subagent is told to check it and that it may miss links.
+- **The subagent** gets:
+  - the fault;
+  - the draft's edges;
+  - the entry services;
+  - the route list;
+  - the survey;
+  - the four tools, capped at 20 calls.
+
+  Its system prompt holds the description of the tables, the contract's own rule for propagation edges (quoted) and how to judge a link. A link is an edge if the caller's calls to the called service changed in the incident. Every route counts, not only the first. A fault in a service's network or outgoing requests can touch all its connections. A link whose calls look normal is not an edge. A service that stopped passes nothing to the services it called.
+- **Its finding** is held to a strict schema: its reasoning first, then the edges, each with a query showing the change on that link, then whether the effect reached the users.
+- **The lead answers again** if any kind check disagrees, or if the edges found differ from the draft's. Service names are compared after lower-casing and removing hyphens and underscores. The lead is shown which found edges are new to its draft, and which of its draft's edges near the fault were not found. It has the last word, on faults and edges alike.
+- **The kind check alone is unchanged:** with no spread check, the lead sees the same message as when the kind check is measured. A test checks this.
+- **Failures don't lose a case:** a failed or unusable spread check leaves the draft as it is.
+
+**Its cost:** a system prompt of about 700 tokens, a route list of 3 to 40 links, the survey, and about 10 calls. That's about 1 cent a fault. Because the found edges will often differ from the draft's, the lead answers again in most cases: under a cent each. Expected: 1.5 to 3 cents a case on top of the configuration it is added to, so $6 to $8 for 100 cases with the kind check, or $5 to $6 without it.

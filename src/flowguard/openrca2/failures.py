@@ -100,10 +100,10 @@ def report(root: Path, folders: list[Path]) -> str:
     lines.append(
         "| Run | Exact match | "
         + " | ".join(sorted({t.system for t in truths.values()}))
-        + " | Cost | Seconds a case |"
+        + " | Edge-F1 | Cost | Seconds a case |"
     )
     systems = sorted({t.system for t in truths.values()})
-    lines.append("|---|---|" + "---|" * len(systems) + "---|---|")
+    lines.append("|---|---|" + "---|" * len(systems) + "---|---|---|")
     for name, run in runs.items():
         acc = {c: run[c]["scores"]["acc"] for c in cases}
         per = [
@@ -115,7 +115,7 @@ def report(root: Path, folders: list[Path]) -> str:
         lines.append(
             f"| {name} | {sum(acc.values()):.0f} | "
             + " | ".join(per)
-            + f" | ${usd:.2f} | {secs:.0f} |"
+            + f" | {edge_f1([run[c]['scores'] for c in cases]):.3f} | ${usd:.2f} | {secs:.0f} |"
         )
 
     names = list(runs)
@@ -165,30 +165,43 @@ def report(root: Path, folders: list[Path]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def edge_f1(scores: list[dict[str, Any]]) -> float:
+    """Mean edge-F1 over the cases whose graph is scored."""
+    values = [s["edge_f1"] for s in scores if s.get("edge_f1") is not None]
+    return sum(values) / len(values) if values else 0.0
+
+
 def kind_checks(name: str, records: list[dict[str, Any]]) -> list[str]:
-    """What the kind check did to the answers of one run; nothing for a run without one."""
+    """What the checks did to the answers of one run; nothing for a run without them."""
     checked = [r for r in records if "draft_scores" in r]
     if not checked:
         return []
     moved: Counter[tuple[str, int, int]] = Counter()
     for r in checked:
-        verdicts = r["kind_checks"]
-        if any(v["disagrees"] for v in verdicts):
-            what = "a check disagreed"
+        verdicts = r.get("kind_checks", [])
+        # Runs from before `second_answer` was recorded had the kind check alone.
+        second = r.get("second_answer", any(v["disagrees"] for v in verdicts))
+        if second:
+            what = "the lead answered again"
         elif all(v["kind"] for v in verdicts):
-            what = "every check agreed"
+            what = "the draft stood"
         else:
-            what = "a check gave no finding"
+            what = "the draft stood; a check gave no finding"
         moved[what, int(r["draft_scores"]["acc"]), int(r["scores"]["acc"])] += 1
     drafts = sum(int(r["draft_scores"]["acc"]) for r in checked)
     finals = sum(int(r["scores"]["acc"]) for r in checked)
-    usd = sum(r["usage_kind_checks"] for r in checked)
+    usd = sum(
+        r.get("usage_kind_checks", 0.0) + r.get("usage_spread_checks", 0.0)
+        for r in checked
+    )
     words = {0: "wrong", 1: "right"}
     return [
-        f"\n### {name}: the kind check, on {len(checked)} cases with a valid draft\n",
+        f"\n### {name}: the checks, on {len(checked)} cases with a valid draft\n",
         f"Exact matches: {drafts} for the drafts, {finals} for the final answers. "
+        f"Edge-F1: {edge_f1([r['draft_scores'] for r in checked]):.3f} for the drafts, "
+        f"{edge_f1([r['scores'] for r in checked]):.3f} for the final answers. "
         f"The checks cost ${usd:.2f}.\n",
-        "| Checks | Draft | Final answer | Cases |\n|---|---|---|---|",
+        "| After the checks | Draft | Final answer | Cases |\n|---|---|---|---|",
         *(
             f"| {what} | {words[draft]} | {words[final]} | {n} |"
             for (what, draft, final), n in sorted(moved.items())

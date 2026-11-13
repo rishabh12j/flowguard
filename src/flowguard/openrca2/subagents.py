@@ -1,9 +1,13 @@
 """Subagents: a fresh context that answers one question for the lead (phase 5).
 
-The kind check is the first. Once the lead has a draft answer, code sends each
-fault in it to a subagent, whose job is to try to disprove the kind the lead
-chose. The findings go back to the lead, which keeps or changes its answer: the
-check is advice, never a limit on the answer.
+Once the lead has a draft answer, code sends each fault in it to subagents:
+
+- the kind check tries to disprove the kind the lead chose;
+- the spread check traces every call link the fault's effect travelled, from a
+  list of the routes up from the faulty service that code computes.
+
+The findings go back to the lead, which keeps or changes its answer: the checks
+are advice, never a limit on the answer.
 
 What the subagent is told comes from two sources and no others: the official
 definitions and boundary rules (the answer contract, part of the task), and how
@@ -25,7 +29,8 @@ from flowguard.openrca2.chat import (
     Usage,
     explore,
 )
-from flowguard.openrca2.score import KINDS, same_kind
+from flowguard.openrca2.score import KINDS, norm, same_kind
+from flowguard.openrca2.survey import _pair
 
 KIND_CALLS = 20
 KIND_FAULTS = 3  # at most this many faults of a draft are checked
@@ -186,40 +191,74 @@ class KindCheck:
                 survey=self.survey,
             ),
         )
+        data = consult(
+            conversation,
+            self.run_tool,
+            KIND_ANSWER,
+            VERDICT_SCHEMA,
+            self.max_calls,
+            budget,
+            verdict,
+            "kind check",
+        )
         try:
-            found = explore(
-                conversation,
-                self.run_tool,
-                max_calls=self.max_calls,
-                refusal=f"Tool-call budget exhausted: the hard cap of {self.max_calls} calls is reached. Stop now.",
-                budget=budget,
-            )
-            verdict.usage.add(found.usage)
-            verdict.calls, verdict.turns = sum(found.calls.values()), found.turns
-            verdict.notes += found.notes
-            final = conversation.conclude(None, KIND_ANSWER, VERDICT_SCHEMA)
-            verdict.usage.add(final.usage)
-            verdict.turns += 1
-            verdict.notes += final.notes
-            data = json.loads(final.text)
-            if data["kind"] not in KINDS:
-                raise ValueError(f"not a kind: {data['kind']!r}")
-            verdict.kind = data["kind"]
-            verdict.confidence = str(data.get("confidence", ""))
-            verdict.scope = str(data.get("scope", ""))
-            verdict.ruled_out = list(data.get("ruled_out", []))
-            verdict.evidence = list(data.get("evidence", []))
-        except ModelFailed as error:
-            # A failed check does not lose the case: the lead's draft stands.
-            verdict.notes.append(f"the kind check failed: {error}")
-            verdict.usage.usd = max(
-                verdict.usage.usd, float(getattr(conversation, "spent", 0.0))
-            )
+            if data is not None:
+                if data["kind"] not in KINDS:
+                    raise ValueError(f"not a kind: {data['kind']!r}")
+                verdict.kind = data["kind"]
+                verdict.confidence = str(data.get("confidence", ""))
+                verdict.scope = str(data.get("scope", ""))
+                verdict.ruled_out = list(data.get("ruled_out", []))
+                verdict.evidence = list(data.get("evidence", []))
         except (ValueError, KeyError, TypeError) as error:
             verdict.notes.append(f"the kind check gave no usable finding: {error}")
         verdict.seconds = round(time.monotonic() - started, 1)
-        verdict.transcript = conversation.transcript()
         return verdict
+
+
+def consult(
+    conversation: Conversation,
+    run_tool: Callable[[ToolCall], str],
+    answer_prompt: str,
+    schema: dict[str, Any],
+    max_calls: int,
+    budget: Callable[[float], bool] | None,
+    into: Any,
+    what: str,
+) -> dict[str, Any] | None:
+    """Let a subagent explore, then ask for its finding; None when there is none.
+
+    What it did (calls, turns, usage, notes, transcript) is written into `into`.
+    A failure is noted, never raised: a failed check does not lose the case.
+    """
+    data = None
+    try:
+        found = explore(
+            conversation,
+            run_tool,
+            max_calls=max_calls,
+            refusal=f"Tool-call budget exhausted: the hard cap of {max_calls} calls is reached. Stop now.",
+            budget=budget,
+        )
+        into.usage.add(found.usage)
+        into.calls, into.turns = sum(found.calls.values()), found.turns
+        into.notes += found.notes
+        final = conversation.conclude(None, answer_prompt, schema)
+        into.usage.add(final.usage)
+        into.turns += 1
+        into.notes += final.notes
+        data = json.loads(final.text)
+        if not isinstance(data, dict):
+            raise ValueError("the finding is not a JSON object")
+    except ModelFailed as error:
+        into.notes.append(f"the {what} failed: {error}")
+        into.usage.usd = max(into.usage.usd, float(getattr(conversation, "spent", 0.0)))
+        data = None
+    except ValueError as error:
+        into.notes.append(f"the {what} gave no usable finding: {error}")
+        data = None
+    into.transcript = conversation.transcript()
+    return data
 
 
 def review(verdicts: list[Verdict]) -> str:
@@ -244,3 +283,294 @@ def review(verdicts: list[Verdict]) -> str:
         lines += [f"- {e.get('claim')}\n  `{e.get('sql')}`" for e in v.evidence]
         parts.append("\n".join(lines))
     return REVIEW.format(findings="\n\n".join(parts))
+
+
+# The spread check ---------------------------------------------------------------
+
+SPREAD_CALLS = 20
+SPREAD_FAULTS = 3  # at most this many faults of a draft are traced
+MAX_LINKS = 40  # call links listed for the subagent, nearest the fault first
+
+SPREAD_SYSTEM = """You are tracing how the effect of one fault travelled through a microservice system. The lead investigator has found a fault at a service. Find every call link through which its effect reached other services, up to the services users call. You are not asked whether the fault is real or what kind it is.
+
+## The data
+{data}
+## What a propagation edge is
+{rules}
+## How to judge a link
+A link joins a service and one of its callers. It carried the effect when the caller's calls to that service changed in the incident against the normal period: more errors, longer times, fewer calls, or calls that stopped. Write the edge from the called service to the caller: the direction the failure travelled, opposite to the calls.
+
+- Follow every route, not only the first one you find. The effect often reaches a caller by several routes at once, including a direct call that skips a service on another route. Each link that carried the effect is one edge.
+- A fault in a service's network, or in its outgoing requests, can touch every connection the service uses: check the links from the services it calls as well as the links to its callers. If the faulty service itself stopped working, its calls to others simply ceased: nothing travelled to them, so those links are not edges.
+- A link whose calls look as they did in the normal period did not carry the effect, even if it lies on a route to the users. Leave it out.
+- Load generators are not services: never use them in an edge.
+
+## How to work
+Code has listed the call links on every route from the faulty service up to the entry services, and from the services it calls, each with how its calls changed. Use the list as a starting point and check it with your own queries: it is computed from parent and child spans and may miss links. For each edge, find one query that shows the change on that link, abnormal against normal. Aim for about 10 tool calls; the hard cap is {max_calls}. Use think_tool to record what each result shows.
+"""
+
+SPREAD_FIRST = """The fault: service `{service}`, kind `{kind}`.
+
+The edges in the lead investigator's draft, for the whole incident: {edges}
+
+Entry services (users' requests arrive here): {entries}
+
+### Call links from the faulty service toward the users, computed by code
+Each row is written in the direction a failure travels: from the called service to its caller. Each change is normal → incident; a dash means no such calls were seen in that period.
+
+{links}
+
+Code has also surveyed this case's telemetry; the survey follows. Use it as a starting point and check it: it may miss what matters.
+
+{survey}"""
+
+SPREAD_ANSWER = """Report your finding now, in the required JSON format:
+- `reasoning`: which routes the effect took and which listed links it did not touch, in two to four sentences;
+- `edges`: every link that carried the effect, from the called service to its caller, each with a query showing the change on that link and what its rows show. Use service names exactly as they appear in the data. Each query must run on the tables as you queried them;
+- `reaches_users`: whether the effect reached an entry service."""
+
+_SQL_EVIDENCE: dict[str, Any] = {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "properties": {"sql": {"type": "string"}, "claim": {"type": "string"}},
+        "required": ["sql", "claim"],
+        "additionalProperties": False,
+    },
+}
+SPREAD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    # In this order, so the reasoning is written before the edges.
+    "properties": {
+        "reasoning": {"type": "string"},
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"},
+                    "evidence": _SQL_EVIDENCE,
+                },
+                "required": ["from", "to", "evidence"],
+                "additionalProperties": False,
+            },
+        },
+        "reaches_users": {"type": "boolean"},
+    },
+    "required": ["reasoning", "edges", "reaches_users"],
+    "additionalProperties": False,
+}
+
+REVIEW_ALL = """Other investigators, each starting fresh with the same tools, checked your draft answer: the kind of each fault, and how each fault's effect travelled. Their findings:
+
+{findings}
+
+They saw less of the case than you did, and they can be wrong. Weigh their evidence against yours: which account explains everything you observed? You may keep your draft or change it, faults and edges alike.
+
+Now write your final answer in the required JSON format, under the same rules as before. If you use their queries as evidence, copy them exactly."""
+
+
+def propagation_rules(contract: str) -> str:
+    """The contract's field rules on propagation and on load generators."""
+    fields = contract[contract.index("## Field rules") : contract.index("## SQL rules")]
+    kept = [
+        item
+        for item in fields.split("\n  * ")[1:]
+        if "propagation" in item or "Synthetic traffic" in item
+    ]
+    return "".join(f"- {' '.join(item.split())}\n" for item in kept)
+
+
+Link = tuple[
+    Any, ...
+]  # (caller, callee, rate n, a, errors n, a, p95 n, a), as survey.calls
+
+
+def routes(links: list[Link], service: str, entries: list[str]) -> list[Link]:
+    """The call links a fault at `service` could travel, nearest first.
+
+    The links from the services it calls, then up from it through its callers.
+    The climb stops at the entry services: their callers are not services users
+    call.
+    """
+    want = norm(service)
+    stop = {norm(e) for e in entries}
+    out: list[Link] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(link: Link) -> None:
+        if (link[0], link[1]) not in seen:
+            seen.add((link[0], link[1]))
+            out.append(link)
+
+    for link in links:
+        if norm(link[0]) == want:
+            add(link)  # one of its callees: the fault may sit on that connection
+    queue, reached = [want], {want}
+    while queue:
+        node = queue.pop(0)
+        if node in stop and node != want:
+            continue
+        for link in links:
+            if norm(link[1]) != node:
+                continue
+            add(link)
+            caller = norm(link[0])
+            if caller not in reached:
+                reached.add(caller)
+                queue.append(caller)
+    return out[:MAX_LINKS]
+
+
+def link_table(links: list[Link]) -> str:
+    if not links:
+        return "No calls to or from this service were found in the traces."
+    rows = [
+        "| From (called) | To (caller) | Calls a minute | Error share | p95 ms |",
+        "|---|---|---|---|---|",
+    ]
+    rows += [
+        f"| {callee} | {caller} | {_pair(rn, ra)} | {_pair(en, ea, 2)} | {_pair(pn, pa)} |"
+        for caller, callee, rn, ra, en, ea, pn, pa in links
+    ]
+    return "\n".join(rows)
+
+
+@dataclass
+class Spread:
+    """What a spread check found for one fault of the draft."""
+
+    service: str
+    kind: str
+    edges: list[dict[str, Any]] | None = None  # None when there is no usable finding
+    reaches_users: bool | None = None
+    reasoning: str = ""
+    links_listed: int = 0
+    calls: int = 0
+    turns: int = 0
+    usage: Usage = field(default_factory=Usage)
+    seconds: float = 0.0
+    notes: list[str] = field(default_factory=list)
+    transcript: list[dict[str, Any]] = field(default_factory=list)
+
+    def pairs(self) -> set[tuple[str, str]]:
+        return {(norm(str(e["from"])), norm(str(e["to"]))) for e in self.edges or []}
+
+    def record(self) -> dict[str, Any]:
+        return {**vars(self), "usage": vars(self.usage)}
+
+
+@dataclass
+class SpreadCheck:
+    """Runs a spread subagent on one fault of a draft answer."""
+
+    spawn: Callable[[str, str], Conversation]
+    run_tool: Callable[[ToolCall], str]
+    data: str
+    rules: str
+    survey: str
+    links: list[Link]  # every call link of the case, as survey.calls gives them
+    entries: list[str]
+    max_calls: int = SPREAD_CALLS
+    max_faults: int = SPREAD_FAULTS
+
+    def __call__(
+        self,
+        claim: dict[str, Any],
+        draft_edges: list[tuple[str, str]],
+        budget: Callable[[float], bool] | None = None,
+    ) -> Spread:
+        started = time.monotonic()
+        spread = Spread(str(claim.get("service", "")), str(claim.get("fault_kind", "")))
+        listed = routes(self.links, spread.service, self.entries)
+        spread.links_listed = len(listed)
+        conversation = self.spawn(
+            SPREAD_SYSTEM.format(
+                data=self.data, rules=self.rules, max_calls=self.max_calls
+            ),
+            SPREAD_FIRST.format(
+                service=spread.service,
+                kind=spread.kind,
+                edges=", ".join(f"{a} → {b}" for a, b in draft_edges) or "none",
+                entries=", ".join(self.entries) or "not found",
+                links=link_table(listed),
+                survey=self.survey,
+            ),
+        )
+        data = consult(
+            conversation,
+            self.run_tool,
+            SPREAD_ANSWER,
+            SPREAD_SCHEMA,
+            self.max_calls,
+            budget,
+            spread,
+            "spread check",
+        )
+        try:
+            if data is not None:
+                spread.edges = [
+                    e
+                    for e in data["edges"]
+                    if str(e["from"]).strip() and str(e["to"]).strip()
+                ]
+                spread.reaches_users = bool(data["reaches_users"])
+                spread.reasoning = str(data.get("reasoning", ""))
+        except (KeyError, TypeError) as error:
+            spread.edges = None
+            spread.notes.append(f"the spread check gave no usable finding: {error}")
+        spread.seconds = round(time.monotonic() - started, 1)
+        return spread
+
+
+def changes_edges(spreads: list[Spread], draft_edges: list[tuple[str, str]]) -> bool:
+    """Whether the spread checks found edges other than the draft's."""
+    found = [s for s in spreads if s.edges is not None]
+    if not found:
+        return False
+    proposed = set().union(*(s.pairs() for s in found))
+    return proposed != {(norm(a), norm(b)) for a, b in draft_edges}
+
+
+def review_all(
+    verdicts: list[Verdict], spreads: list[Spread], draft_edges: list[tuple[str, str]]
+) -> str:
+    """The message that shows the lead what the kind and spread checks found."""
+    parts = []
+    if verdicts:
+        kinds = review(verdicts)
+        parts.append(kinds[kinds.index("###") : kinds.index("\n\nThey saw less")])
+    draft = {(norm(a), norm(b)) for a, b in draft_edges}
+    for s in spreads:
+        head = f"### How the effect of `{s.service}` (`{s.kind}`) travelled"
+        if s.edges is None:
+            parts.append(f"{head}\nThe check gave no finding.")
+            continue
+        lines = [head, f"Reasoning: {s.reasoning}"]
+        if not s.reaches_users:
+            lines.append("They found that its effect did not reach the entry services.")
+        lines.append("Edges they found, from the called service to its caller:")
+        for e in s.edges:
+            pair = (norm(str(e["from"])), norm(str(e["to"])))
+            lines.append(
+                f"- {e['from']} → {e['to']}"
+                + ("" if pair in draft else " (not in your draft)")
+            )
+            lines += [
+                f"  - {ev.get('claim')}\n    `{ev.get('sql')}`" for ev in e["evidence"]
+            ]
+        ends = {norm(s.service)} | {x for pair in s.pairs() for x in pair}
+        left = [
+            f"{a} → {b}"
+            for a, b in draft_edges
+            if (norm(a), norm(b)) not in s.pairs() and {norm(a), norm(b)} & ends
+        ]
+        if left:
+            lines.append(
+                "Edges in your draft near this fault that they did not find: "
+                + ", ".join(left)
+            )
+        parts.append("\n".join(lines))
+    return REVIEW_ALL.format(findings="\n\n".join(parts))

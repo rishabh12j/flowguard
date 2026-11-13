@@ -50,8 +50,18 @@ from flowguard.openrca2.chat import (
 )
 from flowguard.openrca2.design import DATA, Agent, lead_agents
 from flowguard.openrca2.score import KINDS, Answer, load_truth, score, summarise
-from flowguard.openrca2.subagents import KindCheck, Verdict, kind_rules, review
-from flowguard.openrca2.survey import survey
+from flowguard.openrca2.subagents import (
+    KindCheck,
+    Spread,
+    SpreadCheck,
+    Verdict,
+    changes_edges,
+    kind_rules,
+    propagation_rules,
+    review,
+    review_all,
+)
+from flowguard.openrca2.survey import calls, entries, survey
 
 PROMPTS = Path(__file__).parent / "prompts"
 MAX_CALLS = 100
@@ -411,6 +421,8 @@ class CaseRun:
     ]  # (prompt, output) tokens of each of the agent's turns
     draft: str | None = None  # the answer before a kind check, when one ran
     verdicts: list[Verdict] = field(default_factory=list)
+    spreads: list[Spread] = field(default_factory=list)
+    second_answer: bool = False  # the lead answered again after the checks
 
 
 def read_answer(text: str) -> tuple[Answer | None, str]:
@@ -428,12 +440,15 @@ def investigate(
     max_calls: int = MAX_CALLS,
     budget: Callable[[float], bool] | None = None,
     kind_check: KindCheck | None = None,
+    spread_check: SpreadCheck | None = None,
 ) -> CaseRun:
     """Run the loop until the model stops calling tools or reaches the cap, then ask for the answer.
 
     With `kind_check`, that answer is a draft: a subagent tests the kind of each
     fault in it, and if any disagrees the agent is shown the findings and
-    answers again. The agent has the last word.
+    answers again. With `spread_check`, a subagent also traces each fault's
+    effect, and the agent answers again if the edges found differ from the
+    draft's. The agent has the last word.
     """
     started = time.monotonic()
     agent = agent or agents()["standard"]
@@ -466,19 +481,41 @@ def investigate(
     answer, raw = conclude(agent.answer_prompt)
     draft: str | None = None
     verdicts: list[Verdict] = []
-    if kind_check is not None and answer is not None:
+    spreads: list[Spread] = []
+    second = False
+    if (kind_check or spread_check) and answer is not None:
         draft = raw
-        for claim in json.loads(raw)["root_causes"][: kind_check.max_faults]:
-            left = None if budget is None else (lambda usd: budget(total.usd + usd))
-            verdict = kind_check(claim, left)
-            total.add(verdict.usage)
-            verdicts.append(verdict)
-        if any(v.disagrees for v in verdicts):
-            answer, raw = conclude(review(verdicts))
+        claims = json.loads(raw)["root_causes"]
+        draft_edges = list(answer.edges)
+
+        def left() -> Callable[[float], bool] | None:
+            return None if budget is None else (lambda usd: budget(total.usd + usd))
+
+        if kind_check is not None:
+            for claim in claims[: kind_check.max_faults]:
+                verdict = kind_check(claim, left())
+                total.add(verdict.usage)
+                verdicts.append(verdict)
+        if spread_check is not None:
+            for claim in claims[: spread_check.max_faults]:
+                spread = spread_check(claim, draft_edges, left())
+                total.add(spread.usage)
+                spreads.append(spread)
+        if spreads:
+            second = any(v.disagrees for v in verdicts) or changes_edges(
+                spreads, draft_edges
+            )
+            message = review_all(verdicts, spreads, draft_edges)
+        else:
+            # The kind check alone, exactly as it was first measured.
+            second = any(v.disagrees for v in verdicts)
+            message = review(verdicts)
+        if second:
+            answer, raw = conclude(message)
             if answer is None:
                 # A broken second answer does not lose the case: the draft stands.
                 notes.append(
-                    "the answer after the kind check was invalid; the draft stands"
+                    "the answer after the checks was invalid; the draft stands"
                 )
                 answer, raw = read_answer(draft)
     return CaseRun(
@@ -493,6 +530,8 @@ def investigate(
         per_turn,
         draft,
         verdicts,
+        spreads,
+        second,
     )
 
 
@@ -602,7 +641,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--agent",
-        choices=("standard", "lead", "lead+survey", "lead+survey+kind"),
+        choices=tuple(agents()),
         default="standard",
         help="the standard agent, or the design's parts (docs/openrca2-design.md)",
     )
@@ -660,19 +699,29 @@ def main() -> int:
         case = CaseTelemetry(args.root / "telemetry" / "dev", case_id)
         conversation = new(agent.system, agent.first(case), case_id)
         limit = args.max_usd
-        check = None
-        if agent.kind_check:
+        check, spread_check = None, None
+        if agent.kind_check or agent.spread_check:
+            con = case.connect()
+            surveyed = survey(con)
+
             # Bound now: a later case must not reuse this case's ID.
             def spawn(system: str, first: str, case_id: str = case_id) -> Conversation:
-                return new(system, first, f"{case_id}-kind")
+                return new(system, first, f"{case_id}-check")
 
-            check = KindCheck(
-                spawn,
-                tools.run,
-                DATA,
-                kind_rules(agent_contract()),
-                survey(case.connect()),
-            )
+            if agent.kind_check:
+                check = KindCheck(
+                    spawn, tools.run, DATA, kind_rules(agent_contract()), surveyed
+                )
+            if agent.spread_check:
+                spread_check = SpreadCheck(
+                    spawn,
+                    tools.run,
+                    DATA,
+                    propagation_rules(agent_contract()),
+                    surveyed,
+                    calls(con),
+                    entries(con),
+                )
         try:
             run = investigate(
                 conversation,
@@ -681,6 +730,7 @@ def main() -> int:
                 max_calls=args.max_calls,
                 budget=within(spent, limit),
                 kind_check=check,
+                spread_check=spread_check,
             )
         except ModelFailed as error:
             # Recorded, with what it cost, so the spending limit counts it; the case
@@ -736,7 +786,12 @@ def main() -> int:
             # What the answer was before the kind check, and what each check found.
             record["draft"] = run.draft
             record["draft_scores"] = score(read_answer(run.draft)[0], truth)
+            record["second_answer"] = run.second_answer
             record["kind_checks"] = [v.record() for v in run.verdicts]
+            record["spread_checks"] = [s.record() for s in run.spreads]
+            record["usage_spread_checks"] = round(
+                sum(s.usage.usd for s in run.spreads), 6
+            )
             record["usage_kind_checks"] = round(
                 sum(v.usage.usd for v in run.verdicts), 6
             )
