@@ -235,3 +235,48 @@ The rest are a wrong service (5), the entry service named instead (3) and a miss
 
    I recommend `minItems: 1`. The task says every case has a fault, so it adds no assumption, and the fix belongs to the client, not the reasoning. Either way it applies to the lead and survey configuration, so the next comparison uses the fixed version as its base.
 2. **Network delay against HTTP slowness at the caller.** The lead's rule for HTTP faults is right but incomplete: it says what an HTTP fault looks like, not what separates it from a delay on the caller's own network. I propose to put the separating evidence in the kind subagent's brief rather than change the lead prompt, which has already been measured. The evidence is whether every outgoing connection of the pod is slowed (any destination, any protocol, database included) or only particular HTTP routes.
+
+### Decided by the user, 2026-11-13
+
+1. **Empty answers:** `root_causes` now has `minItems: 1` in the answer schema (`openrca2/baseline.py`). It applies to every agent that answers by structured output. The lead and survey run had no empty answer, so its 62 stands as the base for the next comparison.
+2. **Network delay against HTTP slowness:** the separating evidence goes in the kind subagent's brief. The lead prompt stays as measured.
+3. **A check before the held-out test, added to the bar.** The keep rule judges each part against the configuration before it, so nothing so far compares the whole design with the standard agent system by system. Before the held-out test is run, the final design must be no more than 2 exact matches below each of the two baseline runs on every system, on the development cases. As measured, lead and survey fails this on Hotel Reservation (28, against 31 and 32). If the final design fails it, the design is fixed and measured again before any held-out case is run.
+
+## Phase 5, step 2: the kind check, built 2026-11-13
+
+Built and checked offline; not yet run on any case. The user chose, from the trade-offs set out before building: code sends every fault of the lead's draft for a check; the subagent is told the claimed kind and tries to disprove it; the lead has the last word.
+
+- **Run with** `--agent lead+survey+kind`. The lead's prompt, survey and first answer are exactly those of `lead+survey`. A test checks this, so a change in score is the check's.
+- **The flow:**
+  1. The lead investigates and writes its answer, as before. This is now the draft.
+  2. Code sends each fault in the draft, up to 3, to a kind subagent (`openrca2/subagents.py`). Each subagent starts in a fresh context.
+  3. If every check agrees, the draft is the answer. If any disagrees, the lead is shown all the findings, told that the checker saw less of the case and can be wrong, and writes its final answer. The lead's history is kept, so its thinking and cache stay valid.
+- **The subagent is given:**
+  - the claim: the service, the kind and the lead's evidence;
+  - the survey;
+  - the same four tools, capped at 20 calls, with about 10 advised.
+
+  Its system prompt holds three things:
+  - the description of the tables, as the lead has it;
+  - the contract's own definitions, boundary rules and equivalence classes, quoted, without the answer format;
+  - a section on telling kinds apart by scope. Each family of fault acts at one level (a connection, particular HTTP requests, one method or statement, the whole pod, one resource), and that decides what it can touch and what it must leave alone.
+
+  The section ends with the questions that separate the pairs confused most. It is written from how the faults work, not from particular cases, and it names no metric as required: a metric missing from a case proves nothing. The evidence that separates a network delay from HTTP slowness, as the user decided, is here.
+- **Its finding** is held by structured output to a strict schema, in this order, so the reasoning is written before the verdict:
+  1. the scope;
+  2. the kinds ruled out, and why;
+  3. the kind;
+  4. the confidence;
+  5. the evidence queries.
+
+  Two kinds scored as the same answer count as agreement.
+- **Failures don't lose a case:**
+  - A check that fails or gives no usable finding is reported to the lead as such. If none disagrees, the draft stands.
+  - A second answer that is invalid leaves the draft as the answer.
+  - The spending limit covers the checks too. A check stops once the run's limit is reached.
+- **Records.** Each case keeps the draft, the draft's scores, every check's finding, transcript and cost, and the final answer. `python -m flowguard.openrca2.failures` adds a table for such a run: how many drafts and final answers were exact, and how the answers moved where a check disagreed. So the check's effect can be read case by case, not just from the total.
+- **Refactor.** The tool loop moved to `chat.explore`, shared by the lead and the subagent. `investigate` gives the same results as before for the other agents; their tests are unchanged and pass.
+
+**The risk**, stated before measuring: a second opinion on the 62 drafts that are already right can talk the lead out of some of them. The report's table shows how many.
+
+**Measuring it.** Each check adds about 0.5 to 1.5 cents: a 3,300-token system prompt, the survey, and about 10 calls with most of the history read from cache. The lead's second answer, when needed, adds under a cent. Expected cost: 4.5 to 6 cents a case, $5 to $7 for the 100 cases. It stays if, against lead and survey (62), it has at least 8 more exact matches, no system loses more than 2, and it costs at most 10 cents a case. Then the check before the held-out test also applies to whatever configuration is final.

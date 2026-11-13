@@ -13,6 +13,7 @@ pytest.importorskip("duckdb")
 anthropic = pytest.importorskip("anthropic")
 httpx2 = pytest.importorskip("httpx2")
 
+from flowguard.llm.claude import claude_schema  # noqa: E402
 from flowguard.openrca2 import TELEMETRY_FILES  # noqa: E402
 from flowguard.openrca2.access import CaseTelemetry  # noqa: E402
 from flowguard.openrca2.baseline import ANSWER_SCHEMA, INCIDENT, agents  # noqa: E402
@@ -198,6 +199,13 @@ def test_the_answer_schema_is_strict() -> None:
                ANSWER_SCHEMA["properties"]["propagation"]["items"],
                ANSWER_SCHEMA["properties"]["root_causes"]["items"]["properties"]["evidence"]["items"]]  # fmt: skip
     assert all(o["additionalProperties"] is False for o in objects)
+
+
+def test_an_answer_names_at_least_one_fault() -> None:
+    # Five of the lead's first 100 answers were empty; every case has a fault.
+    assert ANSWER_SCHEMA["properties"]["root_causes"]["minItems"] == 1
+    sent = claude_schema(ANSWER_SCHEMA)
+    assert sent["properties"]["root_causes"]["minItems"] == 1
 
 
 class Fake:

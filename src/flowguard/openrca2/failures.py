@@ -161,7 +161,39 @@ def report(root: Path, folders: list[Path]) -> str:
         if kinds:
             lines.append("\n| Wrong kind: true -> claimed | Times |\n|---|---|")
             lines += [f"| {k} | {v} |" for k, v in kinds.most_common()]
+        lines += kind_checks(name, [run[c] for c in cases])
     return "\n".join(lines) + "\n"
+
+
+def kind_checks(name: str, records: list[dict[str, Any]]) -> list[str]:
+    """What the kind check did to the answers of one run; nothing for a run without one."""
+    checked = [r for r in records if "draft_scores" in r]
+    if not checked:
+        return []
+    moved: Counter[tuple[str, int, int]] = Counter()
+    for r in checked:
+        verdicts = r["kind_checks"]
+        if any(v["disagrees"] for v in verdicts):
+            what = "a check disagreed"
+        elif all(v["kind"] for v in verdicts):
+            what = "every check agreed"
+        else:
+            what = "a check gave no finding"
+        moved[what, int(r["draft_scores"]["acc"]), int(r["scores"]["acc"])] += 1
+    drafts = sum(int(r["draft_scores"]["acc"]) for r in checked)
+    finals = sum(int(r["scores"]["acc"]) for r in checked)
+    usd = sum(r["usage_kind_checks"] for r in checked)
+    words = {0: "wrong", 1: "right"}
+    return [
+        f"\n### {name}: the kind check, on {len(checked)} cases with a valid draft\n",
+        f"Exact matches: {drafts} for the drafts, {finals} for the final answers. "
+        f"The checks cost ${usd:.2f}.\n",
+        "| Checks | Draft | Final answer | Cases |\n|---|---|---|---|",
+        *(
+            f"| {what} | {words[draft]} | {words[final]} | {n} |"
+            for (what, draft, final), n in sorted(moved.items())
+        ),
+    ]
 
 
 def main() -> int:

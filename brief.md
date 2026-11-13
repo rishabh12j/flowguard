@@ -1604,3 +1604,15 @@ Measured on the 100 development cases on Haiku (`docs/openrca2-design.md`, "Resu
 - **Lead and survey:** 62 exact. Against the lead, it gained 17 and lost 5 (p = 0.017), with no system worse off, at 3.5 cents a case. The survey passes the keep rule and stays.
 
 Against the baseline, lead and survey is 6 ahead (p about 0.3). That gain is not yet secure, and Hotel Reservation is still 3 to 4 below. Two points wait on the user: how to stop empty answers (`minItems: 1` recommended), and putting the network-delay against HTTP evidence in the kind subagent rather than the lead prompt.
+
+### Decisions after step 1, 2026-11-13
+
+The user decided three points (`docs/openrca2-design.md`, "Decided by the user, 2026-11-13"):
+
+- The answer schema requires at least one fault, so an answer cannot be empty.
+- The evidence that separates a network delay from HTTP slowness goes in the kind subagent's brief; the lead prompt stays as measured.
+- A check is added before the held-out test: on the development cases, the final design must be no more than 2 exact matches below both baseline runs on every system. Lead and survey does not yet pass it on Hotel Reservation.
+
+### Phase 5, step 2, built 2026-11-13: the kind check
+
+The first subagent is built and checked offline: `--agent lead+survey+kind`. Code sends each fault of the lead's draft to a subagent in a fresh context. The subagent tries to disprove the claimed kind, using the contract's rules and a section on telling kinds apart by the scope of what is affected. The lead sees the findings and has the last word. Each record keeps the draft and the checks, so the effect is read case by case. It is measured on the 100 development cases against lead and survey, at about $5 to $7 (`docs/openrca2-design.md`, "Phase 5, step 2").

@@ -32,7 +32,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -40,9 +40,18 @@ from typing import Any
 import duckdb
 
 from flowguard.openrca2.access import CaseTelemetry
-from flowguard.openrca2.chat import Conversation, ModelFailed, ToolCall, ToolSpec, Usage
-from flowguard.openrca2.design import Agent, lead_agents
+from flowguard.openrca2.chat import (
+    Conversation,
+    ModelFailed,
+    ToolCall,
+    ToolSpec,
+    Usage,
+    explore,
+)
+from flowguard.openrca2.design import DATA, Agent, lead_agents
 from flowguard.openrca2.score import KINDS, Answer, load_truth, score, summarise
+from flowguard.openrca2.subagents import KindCheck, Verdict, kind_rules, review
+from flowguard.openrca2.survey import survey
 
 PROMPTS = Path(__file__).parent / "prompts"
 MAX_CALLS = 100
@@ -155,6 +164,8 @@ ANSWER_SCHEMA = {
     "properties": {
         "root_causes": {
             "type": "array",
+            # Every case has at least one fault, so an empty answer is never right.
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "properties": {
@@ -395,7 +406,18 @@ class CaseRun:
     seconds: float
     notes: list[str]
     stopped: str  # why the investigation ended
-    per_turn: list[tuple[int, int]]  # (prompt, output) tokens of each turn
+    per_turn: list[
+        tuple[int, int]
+    ]  # (prompt, output) tokens of each of the agent's turns
+    draft: str | None = None  # the answer before a kind check, when one ran
+    verdicts: list[Verdict] = field(default_factory=list)
+
+
+def read_answer(text: str) -> tuple[Answer | None, str]:
+    """The answer in a model's last message, fenced or not, and the text it was read from."""
+    raw = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.S)
+    return Answer.from_json(fenced.group(1) if fenced else raw), raw
 
 
 def investigate(
@@ -405,70 +427,72 @@ def investigate(
     agent: Agent | None = None,
     max_calls: int = MAX_CALLS,
     budget: Callable[[float], bool] | None = None,
+    kind_check: KindCheck | None = None,
 ) -> CaseRun:
-    """Run the loop until the model stops calling tools or reaches the cap, then ask for the answer."""
+    """Run the loop until the model stops calling tools or reaches the cap, then ask for the answer.
+
+    With `kind_check`, that answer is a draft: a subagent tests the kind of each
+    fault in it, and if any disagrees the agent is shown the findings and
+    answers again. The agent has the last word.
+    """
     started = time.monotonic()
-    total = Usage()
-    calls: Counter[str] = Counter()
-    notes: list[str] = []
-    turns = 0
-    per_turn: list[tuple[int, int]] = []
-    stopped = "the model stopped calling tools"
-
-    def add(u: Usage) -> None:
-        total.prompt += u.prompt
-        total.cache_write += u.cache_write
-        total.cache_read += u.cache_read
-        total.output += u.output
-        total.usd += u.usd
-
-    while True:
-        turn = conversation.ask()
-        turns += 1
-        add(turn.usage)
-        per_turn.append((turn.usage.prompt, turn.usage.output))
-        notes += turn.notes
-        if not turn.calls:
-            break
-        results = []
-        for call in turn.calls:
-            if sum(calls.values()) >= max_calls:
-                results.append((call, BUDGET_SPENT))
-                continue
-            calls[call.name] += 1
-            results.append((call, tools.run(call)))
-        conversation.answer_tools(results)
-        if sum(calls.values()) >= max_calls:
-            stopped = f"the cap of {max_calls} tool calls"
-            break
-        if budget is not None and not budget(total.usd):
-            stopped = "the spending limit"
-            break
-
     agent = agent or agents()["standard"]
-    final = conversation.conclude(
-        agent.answer_system, agent.answer_prompt, agent.answer_schema
+    found = explore(
+        conversation,
+        tools.run,
+        max_calls=max_calls,
+        refusal=BUDGET_SPENT,
+        budget=budget,
     )
-    turns += 1
-    add(final.usage)
-    per_turn.append((final.usage.prompt, final.usage.output))
-    notes += final.notes
-    if final.calls and not final.text.strip():
-        # The answer turn offers no tools; a model that calls one anyway gives no answer.
-        notes.append("the answer turn called a tool instead of answering")
-    raw = final.text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.S)
-    answer = Answer.from_json(fenced.group(1) if fenced else raw)
+    total, notes, turns, per_turn = (
+        found.usage,
+        found.notes,
+        found.turns,
+        found.per_turn,
+    )
+
+    def conclude(prompt: str) -> tuple[Answer | None, str]:
+        nonlocal turns
+        final = conversation.conclude(agent.answer_system, prompt, agent.answer_schema)
+        turns += 1
+        total.add(final.usage)
+        per_turn.append((final.usage.prompt, final.usage.output))
+        notes.extend(final.notes)
+        if final.calls and not final.text.strip():
+            # The answer turn offers no tools; a model that calls one anyway gives no answer.
+            notes.append("the answer turn called a tool instead of answering")
+        return read_answer(final.text)
+
+    answer, raw = conclude(agent.answer_prompt)
+    draft: str | None = None
+    verdicts: list[Verdict] = []
+    if kind_check is not None and answer is not None:
+        draft = raw
+        for claim in json.loads(raw)["root_causes"][: kind_check.max_faults]:
+            left = None if budget is None else (lambda usd: budget(total.usd + usd))
+            verdict = kind_check(claim, left)
+            total.add(verdict.usage)
+            verdicts.append(verdict)
+        if any(v.disagrees for v in verdicts):
+            answer, raw = conclude(review(verdicts))
+            if answer is None:
+                # A broken second answer does not lose the case: the draft stands.
+                notes.append(
+                    "the answer after the kind check was invalid; the draft stands"
+                )
+                answer, raw = read_answer(draft)
     return CaseRun(
         answer,
         raw,
-        calls,
+        found.calls,
         turns,
         total,
         time.monotonic() - started,
         notes,
-        stopped,
+        found.stopped,
         per_turn,
+        draft,
+        verdicts,
     )
 
 
@@ -578,7 +602,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--agent",
-        choices=("standard", "lead", "lead+survey"),
+        choices=("standard", "lead", "lead+survey", "lead+survey+kind"),
         default="standard",
         help="the standard agent, or the design's parts (docs/openrca2-design.md)",
     )
@@ -636,6 +660,19 @@ def main() -> int:
         case = CaseTelemetry(args.root / "telemetry" / "dev", case_id)
         conversation = new(agent.system, agent.first(case), case_id)
         limit = args.max_usd
+        check = None
+        if agent.kind_check:
+            # Bound now: a later case must not reuse this case's ID.
+            def spawn(system: str, first: str, case_id: str = case_id) -> Conversation:
+                return new(system, first, f"{case_id}-kind")
+
+            check = KindCheck(
+                spawn,
+                tools.run,
+                DATA,
+                kind_rules(agent_contract()),
+                survey(case.connect()),
+            )
         try:
             run = investigate(
                 conversation,
@@ -643,6 +680,7 @@ def main() -> int:
                 agent=agent,
                 max_calls=args.max_calls,
                 budget=within(spent, limit),
+                kind_check=check,
             )
         except ModelFailed as error:
             # Recorded, with what it cost, so the spending limit counts it; the case
@@ -694,6 +732,14 @@ def main() -> int:
             "answer": run.raw,
             "transcript": conversation.transcript(),
         }
+        if run.draft is not None:
+            # What the answer was before the kind check, and what each check found.
+            record["draft"] = run.draft
+            record["draft_scores"] = score(read_answer(run.draft)[0], truth)
+            record["kind_checks"] = [v.record() for v in run.verdicts]
+            record["usage_kind_checks"] = round(
+                sum(v.usage.usd for v in run.verdicts), 6
+            )
         path.write_text(
             json.dumps(record, indent=1, default=str) + "\n",
             encoding="utf-8",

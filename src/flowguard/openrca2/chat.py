@@ -4,6 +4,8 @@ Each provider has its own file and keeps the conversation in its own format, so
 that what the model wrote (thinking included) goes back to it unchanged.
 """
 
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -31,6 +33,13 @@ class Usage:
     cache_read: int = 0
     output: int = 0
     usd: float = 0.0
+
+    def add(self, other: "Usage") -> None:
+        self.prompt += other.prompt
+        self.cache_write += other.cache_write
+        self.cache_read += other.cache_read
+        self.output += other.output
+        self.usd += other.usd
 
 
 @dataclass
@@ -68,3 +77,54 @@ class Conversation(Protocol):
     def transcript(self) -> list[dict[str, Any]]:
         """The conversation as plain data, for the run's record."""
         ...
+
+
+@dataclass
+class Exploration:
+    """What one agent did before it was asked for its answer."""
+
+    calls: Counter[str]
+    turns: int
+    usage: Usage
+    per_turn: list[tuple[int, int]]  # (prompt, output) tokens of each turn
+    notes: list[str]
+    stopped: str  # why it ended
+
+
+def explore(
+    conversation: Conversation,
+    run_tool: Callable[[ToolCall], str],
+    *,
+    max_calls: int,
+    refusal: str,
+    budget: Callable[[float], bool] | None = None,
+) -> Exploration:
+    """Let the model call tools until it stops, reaches the cap or the money runs out.
+
+    `refusal` is the result given to a call past the cap. `budget` is given what
+    this exploration has spent and says whether to go on.
+    """
+    out = Exploration(Counter(), 0, Usage(), [], [], "the model stopped calling tools")
+    while True:
+        turn = conversation.ask()
+        out.turns += 1
+        out.usage.add(turn.usage)
+        out.per_turn.append((turn.usage.prompt, turn.usage.output))
+        out.notes += turn.notes
+        if not turn.calls:
+            break
+        results = []
+        for call in turn.calls:
+            if sum(out.calls.values()) >= max_calls:
+                results.append((call, refusal))
+                continue
+            out.calls[call.name] += 1
+            results.append((call, run_tool(call)))
+        conversation.answer_tools(results)
+        if sum(out.calls.values()) >= max_calls:
+            out.stopped = f"the cap of {max_calls} tool calls"
+            break
+        if budget is not None and not budget(out.usage.usd):
+            out.stopped = "the spending limit"
+            break
+    return out

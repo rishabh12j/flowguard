@@ -9,6 +9,9 @@ and kept only if it passes the rule written there.
    answer turn keeps the same system prompt, so no history is edited.
 2. `lead+survey`: the same, with the code survey of the case (survey.py) in the
    first message.
+3. `lead+survey+kind`: the same, and its answer is a draft. A subagent tests the
+   kind of each fault in it (subagents.py), and the lead answers again if any
+   disagrees.
 
 The prompt draws on the task's official texts (the answer contract and the
 dataset's README) and on how each kind of fault works. Nothing in it is fitted to
@@ -50,6 +53,11 @@ Use think_tool to record your reasoning after each round of queries. Aim for abo
 {agent_contract}
 """
 
+# The description of the tables, as the lead is given it, for the subagents.
+DATA = LEAD_SYSTEM.split("## The data")[1].split("## How the answer is judged")[
+    0
+].strip() + chr(10)
+
 LEAD_ANSWER = """Write your answer now, in the required JSON format: every fault you found (service, fault_kind, evidence) and the propagation edges (from, to, evidence). Use service names exactly as they appear in the data. Each evidence query must run on the tables as you queried them, and its claim must be what the rows show."""
 
 SURVEY_NOTE = "\n\nCode has surveyed this case's telemetry; the survey follows. Use it as a starting point and check it: it may miss what matters.\n\n"
@@ -71,6 +79,7 @@ class Agent:
     answer_system: str | None
     answer_prompt: str
     answer_schema: dict[str, Any] | None
+    kind_check: bool = False  # a subagent tests the kind of each fault in the answer
 
 
 def lead_agents(
@@ -78,14 +87,16 @@ def lead_agents(
 ) -> dict[str, Agent]:
     """The design's agents, from the incident text, the answer contract and the answer schema."""
     system = LEAD_SYSTEM.format(agent_contract=contract)
+
+    def with_survey(case: CaseTelemetry) -> str:
+        return incident + SURVEY_NOTE + survey(case.connect())
+
     return {
         "lead": Agent("lead", system, lambda case: incident, None, LEAD_ANSWER, schema),
         "lead+survey": Agent(
-            "lead+survey",
-            system,
-            lambda case: incident + SURVEY_NOTE + survey(case.connect()),
-            None,
-            LEAD_ANSWER,
-            schema,
+            "lead+survey", system, with_survey, None, LEAD_ANSWER, schema
+        ),
+        "lead+survey+kind": Agent(
+            "lead+survey+kind", system, with_survey, None, LEAD_ANSWER, schema, True
         ),
     }
