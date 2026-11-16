@@ -90,6 +90,17 @@ def metrics(start: datetime, broken: bool, hubble: bool) -> list[dict[str, Any]]
                 "value": 100.0 + i % 2,
             }
         )
+        # Two metrics of `a` that shift by exactly the same amount, the later
+        # name first, so a tie broken by row order would pick the wrong one.
+        for name in ("a.tied.second", "a.tied.first"):
+            rows.append(
+                {
+                    "time": t,
+                    "service_name": "a",
+                    "metric": name,
+                    "value": (200.0 if broken else 100.0) + i % 2,
+                }
+            )
         if hubble:
             rows.append({"time": t, "service_name": "a", "metric": "hubble_flows_processed_total",
                          "value": 200.0 if broken else 100.0, "attr.source": "ns/a-5f6d7c8b9-abcde",
@@ -141,6 +152,7 @@ def test_the_survey_shows_what_changed(tmp_path: Path) -> None:
     assert "0.00 → 1.00" in rows["b"]  # every span of b fails
     assert "| 3 |" in rows["b"] and "| 1 |" in rows["b"]  # three restarts, one new pod
     assert "0.00 → 0.00" in rows["a"]
+    assert "| a.tied.first (" in rows["a"]  # a tie goes to the first name
     assert "loadgenerator" not in rows
     assert "Entry services (requests arrive here): a" in text
     calls = text.split("### Calls")[1].split("### Network")[0]

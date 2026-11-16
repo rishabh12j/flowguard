@@ -314,7 +314,7 @@ Unchanged from "Decided by the user, 2026-11-13": on the development cases, the 
 | Reserve: one repair run, or overruns | $28 |
 | **Total** | **$100** |
 
-Spent since 2026-11-13, when the limit was set: $0.00. Each run's `--max-usd` is set to its line here.
+Spent since 2026-11-13, when the limit was set: $14.72 (kind check smoke test $0.04, spread check smoke test $0.04, kind check 100 cases $5.10, standard agent on the fixed tool $3.18 from the reserve, spread check 100 cases $6.36). Each run's `--max-usd` is set to its line here.
 
 ### Schedule
 
@@ -357,3 +357,114 @@ Built and checked offline; not yet run on any case.
 - **Failures don't lose a case:** a failed or unusable spread check leaves the draft as it is.
 
 **Its cost:** a system prompt of about 700 tokens, a route list of 3 to 40 links, the survey, and about 10 calls. That's about 1 cent a fault. Because the found edges will often differ from the draft's, the lead answers again in most cases: under a cent each. Expected: 1.5 to 3 cents a case on top of the configuration it is added to, so $6 to $8 for 100 cases with the kind check, or $5 to $6 without it.
+
+## Phase 5, step 2: the kind check, measured 2026-11-16
+
+Run: `--agent lead+survey+kind`, Claude Haiku 5.5, the 100 development cases. Report: `reports/openrca2-phase5-step2-compared.md`.
+
+| Run | Exact match | Hotel Reservation | OTel Demo | TrainTicket | Edge-F1 | Cost |
+|---|---|---|---|---|---|---|
+| Standard agent, run 1 | 56 | 31 of 33 | 5 of 7 | 20 of 60 | 0.827 | $2.97 |
+| Standard agent, run 2 | 56 | 32 of 33 | 7 of 7 | 17 of 60 | 0.801 | $3.23 |
+| Lead and survey | 62 | 28 | 4 | 30 | 0.891 | $3.46 |
+| Lead and survey, this run's drafts | 60 | 24 | 5 | 31 | 0.855 | |
+| Lead, survey and kind check | **72** | 25 | 4 | 43 | 0.858 | $5.10 |
+
+**Against the keep rule, as written** (against the run of the configuration it was added to, lead and survey):
+
+- exact matches: +10 (at least 8 needed): met. Paired: 19 cases only it got right, 9 only lead and survey got right, p = 0.087;
+- no system loses more than 2: **not met**. Hotel Reservation 28 → 25 (−3); OTel Demo 4 → 4; TrainTicket 30 → 43;
+- cost: 5.1 cents a case in all, of which the checks are 1.6 cents: met.
+
+So by the rule as written, the kind check does not qualify, by one Hotel Reservation case.
+
+**What the check itself did.** Each case keeps the lead's draft from before the check, so the check's own effect can be read on the same investigations. Draft 60, final 72: 16 drafts fixed, 4 broken, paired p = 0.012. By system: Hotel Reservation +1 (3 fixed, 2 broken), OTel Demo −1 (0 fixed, 1 broken), TrainTicket +12 (13 fixed, 1 broken). The Hotel Reservation loss against lead and survey comes from this run's drafts (24, against lead and survey's 28), before any check ran. Five of the Hotel Reservation cases that lead and survey got right and this run's drafts got wrong are the same miss: `search` named `http_slow` where the label is `network_delay` at `rate`, the confusion recorded in phase 5 step 1. On the same lead, the drafts' edge-F1 also fell from 0.891 to 0.855, so the lead's run-to-run spread is about 4 Hotel Reservation cases and 0.03 to 0.04 in edge-F1.
+
+**How the misses changed.** The 13 network-to-database misreads of lead and survey (`network_loss`, `network_corrupt`, `network_partition` or `network_delay` read as `database_call_*`) are down to 2. The largest class now is a wrong member of the network family: `network_corrupt` → `network_loss` 5 times, `network_delay` → `network_loss` or `network_partition` 3 times, `network_partition` → `dns_lookup_failed` twice.
+
+**The verdicts.** 112 checks on 100 cases; the lead answered again in 36.
+
+- On a fault the draft had right (71 verdicts), the check agreed in 61 and disagreed in 10, 7 of them at low confidence. The lead took the check's kind in 7 of those 10 and kept its own in 3; 4 of the cases lost their exact match.
+- On a fault the draft had wrong (35 verdicts), the check found the right kind in 18 and a different wrong kind in 17.
+- 6 verdicts were on a service with no fault. No check failed or gave no finding.
+- High-confidence verdicts were right in 19 of 20; low-confidence ones in 10 of 21.
+
+**Decision, 2026-11-16: kept.** The rule as written says no, by one case; the within-run comparison says the check itself did not cost Hotel Reservation anything. The user kept it ("one miss from Hotel Reservation is bearable"). This is a judgement made after seeing the result, not a pass under the rule.
+
+**The check before the held-out test, looking ahead.** On Hotel Reservation, every lead configuration measured is more than 2 below both baseline runs (lead and survey 28, this run 25, against 31 and 32). The Hotel Reservation miss is in the lead's drafts, not in any check, so a configuration that passes that check needs a change that reaches the lead's reading of `network_delay` against `http_slow`, or decision 2 will have to be asked.
+
+## Decided by the user, 2026-11-16
+
+1. **The kind check stays**, by the user's judgement after seeing the result (above). The configuration the next parts are added to is lead, survey and kind check.
+2. **The time is 5 days from 2026-11-16**, so the cut-off of the earlier schedule no longer applies: the checker and the origin check are still built and measured. The $100 limit is unchanged.
+3. **The spread check, and the checker after it, are judged within their own run**, against that run's drafts, not against another run. The same lead configuration scored 28 and then 24 on Hotel Reservation, and its drafts' edge-F1 moved from 0.891 to 0.855, so a run-to-run comparison is about as noisy as the effects being measured. Fixed before the spread check is measured:
+   - **edge-F1:** the final answers' mean edge-F1 is at least 0.05 above the drafts'. For scale, the kind check alone moved it by 0.003 in its run;
+   - **exact match:** on the cases where every kind check agreed with the draft, so that only the spread check could change the answer, the final answers have no fewer exact matches than the drafts, and no system loses more than 2;
+   - **cost:** the spread checks cost at most 10 cents a case;
+   - for information only, not a test: the final answers' exact matches against the kind check run's 72, which used the old tool.
+4. **The tool failure is fixed.** See "The tool fix, 2026-11-16".
+
+### The tool fix, 2026-11-16
+
+Found while reading case-106 step by step. Three faults, all present in every run so far, the baselines included:
+
+- **A query returning a time column failed.** DuckDB needs the `pytz` package to return a zoned timestamp, and the environment did not have it. In the baseline runs, 98 and 93 of the 100 cases had at least one such failed call, about 5% of all tool calls. The agents recovered by dropping the time column, at the cost of a turn and of the time order. Fixed: `pytz` is installed and listed in the `openrca2` extra.
+- **Times followed the laptop's time zone.** The connection used the machine's zone, Asia/Calcutta (+05:30), so any time shown, and any hour or day bucket, was 5.5 hours off the data's UTC. Fixed: `CaseTelemetry.connect` sets the session to UTC, so results no longer depend on the machine. The survey uses `epoch` and minute buckets, which the offset does not move, so its values are unchanged.
+- **The survey was not reproducible.** DuckDB returns groups in no fixed order, so rows that scored equally came out in a different order on each call, and where a list is cut (the 30 calls that changed most, the connections, a service's largest metric shift) which tied rows made the cut varied. On case-106, four calls gave four different texts; the values never differed. Fixed: the call and connection lists are sorted by name before the stable sorts, and a tie in the largest metric shift goes to the first metric name. Checked: 3 surveys each of 20 development cases, all identical.
+
+Tests: a query returning a time column comes back in UTC, and the session zone is UTC (`test_openrca2_baseline.py`); a tie in the largest metric shift goes to the first name (`test_openrca2_design.py`; it records the rule, but passes on the old code too, so the 20-case check is what shows the fix).
+
+**What it changes.** From the spread check's run on, the agents work with the fixed tool, and the held-out test will too. A comparison between a run on the fixed tool and one on the old tool mixes the tool's effect with the part's, which is a reason for judging the spread check within its own run (decision 3). The check before the held-out test compares the final configuration with the standard agent's runs, which used the old tool, so a third run of the standard agent on the fixed tool is proposed, for about $3.50 from the reserve.
+
+### Schedule from 2026-11-16
+
+| Day | Date | Runs | Work |
+|---|---|---|---|
+| 1 | 2026-11-16 | Spread check, split across two terminals; the standard agent on the fixed tool | Checker built |
+| 2 | 2026-11-17 | Checker | Analysis; origin check built |
+| 3 | 2026-11-18 | Origin check | Analysis; the check before the held-out test; the final configuration chosen; the held-out runner built |
+| 4 | 2026-11-19 | Held-out test, both agents, split across terminals | |
+| 5 | 2026-11-20 | | Results and write-up |
+
+### The standard agent on the fixed tool, measured 2026-11-16
+
+A third run of the standard agent, on the fixed tool. Report: `reports/openrca2-baseline-fixed-tool-compared.md`.
+
+| Run | Tool | Exact match | Hotel Reservation | OTel Demo | TrainTicket | Edge-F1 | Failed tool calls | Cost |
+|---|---|---|---|---|---|---|---|---|
+| Standard agent, run 1 | old | 56 | 31 | 5 | 20 | 0.827 | 17.4% (196 for want of `pytz`) | $2.97 |
+| Standard agent, run 2 | old | 56 | 32 | 7 | 17 | 0.801 | 15.8% (183) | $3.23 |
+| Standard agent, run 3 | fixed | 54 | 30 | 4 | 20 | 0.836 | 11.1% (0) | $3.18 |
+
+- **The fix did what it was for:** no call failed for want of `pytz`, and the share of failed calls fell from about 16% to 11%. The rest are the agent's own mistakes: wrong column names, results too big, SQL errors.
+- **The score did not measurably move.** Run 3 against runs 1 and 2: 14 and 16 cases differ, split 6 to 8 and 7 to 9, p = 0.79 and 0.80, the same as the 12 that runs 1 and 2 differ on. So the comparisons between configurations made on the old tool stand, and the standard agent's held-out run, on the fixed tool, is a fair reference.
+- **The check before the held-out test is unchanged.** It asks for no more than 2 below each baseline run on every system. Run 3 is not above runs 1 and 2 on any system, so the bars stay: Hotel Reservation 30 of 33, OTel Demo 5 of 7, TrainTicket 18 of 60. Lead, survey and kind check (25, 4, 43) are below the bar on Hotel Reservation by 5 and on OTel Demo by 1.
+
+## Phase 5, step 3: the spread check, measured 2026-11-16
+
+Run: `--agent lead+survey+kind+spread`, Claude Haiku 5.5, the 100 development cases, on the fixed tool, split across two terminals. Reports: `reports/openrca2-phase5-step3-spread-rule.md` (the keep rule) and `reports/openrca2-phase5-step3-compared.md`.
+
+**Against the keep rule, fixed before the run** (final answers against the same run's drafts):
+
+| Condition | Result | |
+|---|---|---|
+| Edge-F1 up by at least 0.05 (95 scored cases) | 0.871 → 0.905, **+0.035**. Hotel Reservation +0.011, OTel Demo +0.061, TrainTicket +0.044. Up in 20 cases, down in 4 | **not met** |
+| On the 65 cases where every kind check agreed, no fewer exact matches; no system loses more than 2 | 55 → 55, no case moved | met |
+| Spread checks at most 10 cents a case | 0.9 cents ($0.92); the whole run 6.4 cents ($6.36) | met |
+
+**The spread check is not kept.** It added edges the drafts missed, as designed, and none of its 111 findings was unusable, but the gain is below the bar set before the run.
+
+**It also seems to weaken the kind check.** For information (a different run, so not a test): this run's final answers have 66 exact matches, against 72 for the kind check's run, from drafts of 62 and 60. Within this run the kind check gained 4 (drafts 62, finals 66), against 12 in its own run. The verdicts were no worse; the lead took them less often:
+
+| When the kind check disagreed with a wrong draft and was right | Kind check run | Kind and spread run |
+|---|---|---|
+| The lead took the check's kind | 16 | 9 |
+| The lead kept its own | 2 | 6 |
+
+The difference is not significant on its own (Fisher's exact p = 0.10), but four cases show it directly: case-125, case-154 and case-216 got the same verdict in both runs (`database_call_*` → `network_partition`), and so did case-056 (`http_slow` → `network_delay`). The lead took the verdict in the kind check's run and kept its draft in this one.
+
+A likely cause, read from case-216 and case-125 and not tested: the spread check is briefed with the draft's kind, and its section of the lead's message is headed with it ("How the effect of `ts-station-service` (`database_call_failed`) travelled"). The lead then sees one investigator reject its kind and a second one apparently working from it, in a message about 13,000 characters long. The kind finding is no longer the only voice.
+
+**Consequence.** The configuration stays lead, survey and kind check. The checker is added to it. If spread edges are tried again, the spread check should run after the kind check, use the kind the lead settles on (or none), and report in a separate step; that would be a new part, measured afresh.
+
+**The check before the held-out test.** This run's Hotel Reservation (27) and OTel Demo (5) are nearer the bars (30 and 5) than the kind check's run (25 and 4), but the spread check is not kept, so they don't count toward it.

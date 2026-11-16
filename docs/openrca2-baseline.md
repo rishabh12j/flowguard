@@ -24,6 +24,7 @@ Phase 3 of the plan in `brief.md`, section 33. The question is what the leaderbo
 - **The harness is not public**, so the exact message flow around the prompts is the closest reading of the paper and the co-author's code.
 - **Temperature.** The current Claude Haiku and Sonnet models refuse any temperature but the default, so the paper's 0.7 is used only on local models. Thinking and effort are left at each model's defaults.
 - **Tables.** All ten tables can be queried in every call. The co-author's tool mounts only the tables a call names.
+- **The tool, before 2026-11-16.** Every run before that date lacked the `pytz` package, so a query returning a time column failed (about 5% of tool calls), and its times followed the laptop's zone (+05:30) instead of UTC. Both are fixed from 2026-11-16 (`docs/openrca2-design.md`, "The tool fix, 2026-11-16"); the leaderboard's runs are unlikely to have had either fault.
 - **Evidence grading.** The official judge mounts the tables with their original column names, while the tools show underscores. An evidence query written as the tools taught would fail there. Here evidence queries are graded on the underscored tables the agent saw. SQL Exec is not a leaderboard column.
 
 ## Checks

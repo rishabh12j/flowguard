@@ -89,6 +89,9 @@ class CaseTelemetry:
         allowed = ", ".join(_quote(path) for path in paths.values())
         con.execute(f"SET allowed_paths = [{allowed}]")
         con.execute("SET enable_external_access = false")
+        # The telemetry is in UTC. Without this, times and hour buckets follow the
+        # machine's zone (+05:30 on the laptop the first runs used).
+        con.execute("SET TimeZone = 'UTC'")
         con.execute("SET lock_configuration = true")
         for name, path in paths.items():
             view = name.removesuffix(".parquet")

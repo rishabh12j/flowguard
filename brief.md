@@ -1625,3 +1625,19 @@ A limit of $100 and 7 days from 2026-11-13 (`docs/openrca2-design.md`, "The plan
 - the origin check stays if it fixes half of its target misses and breaks no more than 2.
 
 The spread check is built: `--agent lead+survey+spread`, or `lead+survey+kind+spread`. Code lists every call route up from a fault, and a subagent decides with evidence which links carried its effect. Lead and survey's edge errors are almost all missing edges (102 missed against 20 extra).
+
+### Phase 5, step 2: the kind check, measured 2026-11-16
+
+Lead, survey and kind check: 72 exact on the 100 development cases, against 62 for lead and survey and 56 for both standard-agent runs; 5.1 cents a case. On the same investigations, the check took the drafts from 60 to 72 (16 fixed, 4 broken, p = 0.012). The keep rule as written is missed by one case: Hotel Reservation 28 → 25, but that loss is in this run's drafts (24), before any check. Whether the check stays is the user's decision (`docs/openrca2-design.md`, "Phase 5, step 2: the kind check, measured").
+
+### Decided 2026-11-16, and the tool fix
+
+The user kept the kind check, accepting the one Hotel Reservation case it falls short by, and gave 5 days from 2026-11-16, so the checker and the origin check are still built. The spread check and the checker are judged within their own run, against its drafts: edge-F1 up by at least 0.05, and no fewer exact matches on the cases where only the spread check could change the answer.
+
+The tool is fixed. A query returning a time column used to fail (`pytz` was missing, about 5% of calls), times followed the laptop's zone (+05:30), and the survey's tied rows came out in a different order on each call. Every run before 2026-11-16 had these faults; the spread run and the held-out test will not.
+
+The standard agent on the fixed tool scored 54 (Hotel Reservation 30, OTel Demo 4, TrainTicket 20), within run-to-run spread of the earlier 56 and 56 (p = 0.8). The fix removed the `pytz` failures (failed calls fell from about 16% to 11%) without changing the score, so earlier comparisons stand.
+
+### Phase 5, step 3: the spread check, measured 2026-11-16
+
+Not kept. Judged within its run against the drafts, edge-F1 rose by 0.035 (0.871 → 0.905), short of the 0.05 fixed before the run; exact matches and cost passed. It also seems to have weakened the kind check: the lead took right kind verdicts 9 times in 15, against 16 in 18 in the kind check's run, and the run ended at 66 exact against 72. A likely cause is that the spread check is briefed with, and reports under, the draft's kind. The configuration stays lead, survey and kind check.

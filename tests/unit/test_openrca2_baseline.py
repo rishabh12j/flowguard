@@ -167,6 +167,28 @@ def test_the_tools_show_underscored_columns_and_ten_rows(case: CaseTelemetry) ->
     assert json.loads(by_file) == [{"n": 40}]
 
 
+def test_a_time_column_comes_back_in_utc_whatever_the_machines_zone(
+    case: CaseTelemetry,
+) -> None:
+    # Returning a zoned timestamp needs pytz; without it every such query failed.
+    # The session zone is UTC, so hour buckets don't move with the laptop's zone.
+    rows = json.loads(
+        Tools(case).run(
+            call(
+                "query_parquet_files",
+                parquet_files=["abnormal_traces"],
+                query="SELECT min(time) AS t0, date_trunc('hour', min(time)) AS h "
+                "FROM abnormal_traces",
+            )
+        )
+    )
+    assert rows == [
+        {"t0": "2026-05-01 00:00:00+00:00", "h": "2026-05-01 00:00:00+00:00"}
+    ]
+    con = case.connect()
+    assert con.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+
+
 def test_a_big_result_is_refused_with_advice(case: CaseTelemetry) -> None:
     result = json.loads(
         Tools(case).run(

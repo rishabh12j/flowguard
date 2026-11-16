@@ -118,7 +118,12 @@ def services(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
                                 0.01 * abs(avg(value) FILTER (WHERE p = 'n')), 1e-6) AS z,
                      count(*) FILTER (WHERE p = 'n') AS nn
               FROM m WHERE isfinite(value) AND metric NOT LIKE 'hubble%' GROUP BY 1, 2)
-            SELECT service_name, arg_max(metric, z), max(z) FROM s WHERE nn >= 3 AND z IS NOT NULL GROUP BY 1""",
+            SELECT service_name, metric, z FROM (
+              -- Ties (one metric a multiple of another) go to the first name, so runs agree.
+              SELECT service_name, metric, z, row_number() OVER (
+                       PARTITION BY service_name ORDER BY round(z, 3) DESC, metric) AS k
+              FROM s WHERE nn >= 3 AND z IS NOT NULL)
+            WHERE k = 1""",
     ):
         if name:
             r = row(name)
@@ -205,7 +210,9 @@ def calls(con: duckdb.DuckDBPyConnection) -> list[tuple[Any, ...]]:
             values[i] = n / minutes[p]
             values[2 + i] = err
             values[4 + i] = p95
-    return [(a, b, *v) for (a, b), v in out.items()]
+    # Sorted by name: DuckDB returns groups in no fixed order, and the survey's
+    # stable sorts and cut-offs would otherwise show ties differently each run.
+    return [(a, b, *v) for (a, b), v in sorted(out.items())]
 
 
 def entries(con: duckdb.DuckDBPyConnection) -> list[str]:
@@ -282,7 +289,7 @@ def connections(
             v.get("drops_n", 0.0),
             v.get("drops_a", 0.0),
         )
-        for (a, b), v in pairs.items()
+        for (a, b), v in sorted(pairs.items())
     ]
 
 
