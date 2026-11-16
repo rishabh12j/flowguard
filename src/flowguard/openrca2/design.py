@@ -84,6 +84,8 @@ class Agent:
     answer_schema: dict[str, Any] | None
     kind_check: bool = False  # a subagent tests the kind of each fault in the answer
     spread_check: bool = False  # a subagent traces how each fault's effect travelled
+    kind_v2: bool = False  # the kind check's second version (brief and call table)
+    kind_v3: bool = False  # the third version (the second, plus HTTP against network)
 
 
 def lead_agents(
@@ -102,6 +104,27 @@ def lead_agents(
         ),
         "lead+survey+kind": Agent(
             "lead+survey+kind", system, with_survey, None, LEAD_ANSWER, schema, True
+        ),
+        "lead+survey+kind2": Agent(
+            "lead+survey+kind2",
+            system,
+            with_survey,
+            None,
+            LEAD_ANSWER,
+            schema,
+            kind_check=True,
+            kind_v2=True,
+        ),
+        "lead+survey+kind3": Agent(
+            "lead+survey+kind3",
+            system,
+            with_survey,
+            None,
+            LEAD_ANSWER,
+            schema,
+            kind_check=True,
+            kind_v2=True,
+            kind_v3=True,
         ),
         "lead+survey+spread": Agent(
             "lead+survey+spread",

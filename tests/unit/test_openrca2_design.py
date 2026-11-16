@@ -19,7 +19,7 @@ from flowguard.openrca2.access import CaseTelemetry  # noqa: E402
 from flowguard.openrca2.baseline import ANSWER_SCHEMA, INCIDENT, agents  # noqa: E402
 from flowguard.openrca2.chat import ToolSpec  # noqa: E402
 from flowguard.openrca2.chat_claude import ClaudeConversation  # noqa: E402
-from flowguard.openrca2.survey import entries, pod_service, survey  # noqa: E402
+from flowguard.openrca2.survey import entries, pod_service, shapes, survey  # noqa: E402
 
 T0 = datetime(2026, 5, 1, tzinfo=UTC)
 
@@ -272,3 +272,66 @@ def test_the_lead_answer_turn_keeps_its_history_and_sends_the_schema() -> None:
     )  # the thinking block is replayed untouched
     assert body["output_config"]["format"]["type"] == "json_schema"
     assert "enum" in json.dumps(body["output_config"]["format"]["schema"])
+
+
+def partition() -> Any:
+    """search calls rate; in the incident every call fails at once and rate falls
+    silent in spans and logs, while its metrics go on: a cut connection."""
+    import duckdb
+
+    con = duckdb.connect(":memory:")
+    for p, start in (("normal", T0), ("abnormal", T0 + timedelta(minutes=1))):
+        con.execute(
+            f"""CREATE TABLE {p}_traces (time TIMESTAMPTZ, trace_id VARCHAR, span_id VARCHAR,
+                parent_span_id VARCHAR, span_name VARCHAR, "attr.span_kind" VARCHAR,
+                service_name VARCHAR, duration BIGINT, "attr.status_code" VARCHAR,
+                "attr.http.response.status_code" INTEGER)"""
+        )
+        con.execute(
+            f"CREATE TABLE {p}_logs (time TIMESTAMPTZ, service_name VARCHAR, message VARCHAR)"
+        )
+        con.execute(
+            f"CREATE TABLE {p}_metrics (time TIMESTAMPTZ, service_name VARCHAR, metric VARCHAR, value DOUBLE)"
+        )
+        for i in range(61):
+            at = start + timedelta(seconds=i)
+            broken = p == "abnormal"
+            con.execute(
+                f"INSERT INTO {p}_traces VALUES (?, ?, ?, '', 'rate.Rate/GetRates', 'Client', 'search', ?, ?, NULL)",
+                [
+                    at,
+                    f"t{i}",
+                    f"c{i}",
+                    10_000 if broken else 400_000,
+                    "Error" if broken else "Unset",
+                ],
+            )
+            if not broken:
+                con.execute(
+                    f"INSERT INTO {p}_traces VALUES (?, ?, ?, ?, 'rate.Rate/GetRates', 'Server', 'rate', 100000, 'Unset', NULL)",
+                    [at, f"t{i}", f"s{i}", f"c{i}"],
+                )
+                con.execute(f"INSERT INTO {p}_logs VALUES (?, 'rate', 'served')", [at])
+            con.execute(f"INSERT INTO {p}_metrics VALUES (?, 'rate', 'cpu', 1.0)", [at])
+    return con
+
+
+def test_the_call_table_shows_a_cut_connection_and_that_both_ends_live() -> None:
+    text = shapes(partition(), "rate")
+    calls = text.split("### Is each end")[0]
+    rows = [line for line in calls.splitlines() if line.startswith("| search |")]
+    # No Server span answered in the incident, but search's only callee for this
+    # method is rate, so the failing calls are shown as calls to rate.
+    assert len(rows) == 1 and "| search | rate | rate.Rate/GetRates |" in rows[0]
+    cells = [c.strip() for c in rows[0].split("|")]
+    assert cells[5] == "0.00 → 1.00"  # every call fails
+    assert cells[7] == "0.4 → 0.0"  # at once, not at a timeout
+    assert cells[9] == "0.1 → -"  # rate answered none of them
+    alive = {
+        line.split("|")[1].strip(): line
+        for line in text.splitlines()
+        if line.startswith("| rate |")
+    }
+    spans, logs, metrics = [c.strip() for c in alive["rate"].split("|")[2:5]]
+    assert spans.endswith("→ 0.0") and logs.endswith("→ 0.0")
+    assert not metrics.endswith("→ 0.0")  # its metrics go on: alive, cut off

@@ -124,6 +124,99 @@ They saw less of the case than you did, and they can be wrong. Weigh their evide
 Now write your final answer in the required JSON format, under the same rules as before. If you use their queries as evidence, copy them exactly."""
 
 
+# The kind check, second version (2026-11-16) ------------------------------------
+# The first version's brief with the network, pod and DNS kinds described as the
+# network-fault study measured them on the development cases, new questions for
+# the pairs it confused, and a table of the claimed service's calls computed by
+# code. Everything else is the first version's, word for word.
+
+
+def _replace(text: str, old: str, new: str) -> str:
+    if text.count(old) != 1:
+        raise ValueError(f"the first version's brief has changed: {old[:50]!r}")
+    return text.replace(old, new)
+
+
+_NETWORK_V1 = (
+    "A delay adds a similar amount to every call on the connection. Loss and corruption cause "
+    "retransmissions: irregular times with long tails, timeouts, resets, connection errors. "
+    "A partition leaves calls hanging until a timeout, or unable to connect, while both services "
+    "stay alive and go on with their other work."
+)
+_NETWORK_V2 = """Each network kind has its own shape on the calls over the faulty connection:
+  - **Delay:** every call is slower by about the same amount, so the 25th and 50th percentiles move as much as the 95th, often by hundreds of milliseconds or more. Nothing fails.
+  - **Loss and corruption:** most calls stay as fast as before (the median moves by a few milliseconds at most) and a tail appears in steps of about 200 ms, TCP's retransmission timeout, so the 95th percentile jumps while the median does not. Nothing fails unless the loss is heavy. A corrupted packet is dropped and resent like a lost one, so the telemetry cannot tell `network_loss` from `network_corrupt`.
+  - **Partition:** the calls fail, either at once (a client that cannot connect gives up in well under a millisecond) or after hanging until a timeout (often 30 s, 60 s or more), while the services at both ends stay alive: they go on emitting metrics and logs.
+  Judge the shape on the calls over the faulty connection itself. A caller whose every request makes many calls over a lossy connection can show a raised median of its own."""
+
+_POD_V1 = (
+    "- **A pod fault (`pod_*`) stops the whole instance:** restarts, a new pod name, a reset uptime, "
+    "not ready, and a gap in every signal from that pod at once. Its callers fail fast or time out."
+)
+_POD_V2 = (
+    "- **A pod fault (`pod_*`) stops the whole instance.** `pod_unavailable`: the service disappears for the incident, "
+    "with no spans and no logs from it, and usually its container metrics fall to a few rows; its callers' calls to it fail "
+    "at once or simply stop. `pod_failure`: a kill and restart, with a new pod name or a reset uptime, a short gap, and callers "
+    "refused for a while."
+)
+
+_DNS_V1 = (
+    "- **A DNS fault shows in the error text:** a name cannot be resolved, before any connection is tried. "
+    "Timeouts and connection failures without such text point to the network."
+)
+_DNS_V2 = (
+    "- **A DNS fault shows in the error text:** a name cannot be resolved (`UnknownHost`, `no such host`, "
+    "`name resolution`), before any connection is tried. Calls that fail at once with no such text are not "
+    "evidence of DNS: a cut connection and a missing pod also fail at once."
+)
+
+_QUESTIONS_V2 = """Questions that separate kinds often confused:
+- *Slow calls with nothing failing.* Did the 25th and 50th percentiles move as much as the 95th? That is `network_delay`. Did only the tail move, in steps near 200 ms, with the median nearly where it was? That is `network_loss` or `network_corrupt`. These two cannot be told apart here: keep the one claimed unless something else separates them.
+- *Calls that fail.* Is the called service still alive, its metrics arriving at their normal volume and its logs going on? Then the connection is cut: `network_partition`, whether the calls fail at once or at a timeout. Has it gone silent in spans and logs, and its metrics fallen away? Then the pod is gone: `pod_unavailable` at that service. Only with name-resolution errors in the text is it `dns_lookup_failed`.
+"""
+
+KIND_SYSTEM_V2 = _replace(
+    _replace(
+        _replace(
+            _replace(KIND_SYSTEM, _NETWORK_V1, _NETWORK_V2),
+            _POD_V1,
+            _POD_V2,
+        ),
+        _DNS_V1,
+        _DNS_V2,
+    ),
+    "Questions that separate kinds often confused:\n",
+    _QUESTIONS_V2,
+)
+KIND_SYSTEM_V2 = _replace(
+    KIND_SYSTEM_V2,
+    "## Where to look\n",
+    "## Where to look\n- **The table of the claimed service's calls**, computed by code, in your first message: start from it, and check it.\n",
+)
+
+# The kind check, third version (2026-11-16) -------------------------------------
+# The second version's brief with one more question: an HTTP fault or a network
+# fault, as the HTTP faults of the development cases showed (all on TrainTicket).
+
+_HTTP_V3 = """- *An HTTP fault or a network fault?* An HTTP fault is injected into one service's HTTP client, for one route to one called service, and acts at the HTTP layer; a network fault acts on the connection, under every protocol it carries.
+  - `http_slow` adds one fixed delay to each request: the 25th, 50th and 95th percentiles all rise by the same amount, to within a few percent, and the spread between them stays as narrow as before. A network delay usually comes with jitter, so its spread widens and the 95th rises well beyond the median. A narrow, fixed shift alone does not rule out a network delay: check whether other routes or other traffic on the same connection (database queries, RPC) slowed too.
+  - `http_aborted` cuts the response: the calls fail in about a millisecond, or at the called service's usual time, and the caller logs that the response ended early (`Unexpected end of file from server`, a connection reset). A partition does not end calls that way: they hang until a connect or read timeout (`Connection timed out`, tens of seconds or more), or cannot connect at all.
+  - `http_wrong_status_code` and `http_response_body_corrupted`: the called service answered as usual and in its usual time, and the caller then failed on what it received: an HTTP status error (401, 405, 500 and the like), a response it cannot read or parse, or a missing value used later. The network never hands damaged data to the application: TCP discards a corrupted packet and sends it again, so `network_corrupt` shows as a tail of retransmissions, never as unreadable responses.
+"""
+
+KIND_SYSTEM_V3 = _replace(KIND_SYSTEM_V2, _QUESTIONS_V2, _QUESTIONS_V2 + _HTTP_V3)
+
+KIND_FIRST_V2 = """The claim to test: service `{service}` suffered `{kind}`.
+
+The lead investigator's evidence for it:
+{evidence}
+
+{shapes}
+Code has also surveyed this case's telemetry; the survey follows. Use it as a starting point and check it: it may miss what matters.
+
+{survey}"""
+
+
 def kind_rules(contract: str) -> str:
     """The contract's definitions, boundary rules and equivalence classes, without the answer format."""
     start = contract.index("`fault_kind` labels a root cause")
@@ -168,6 +261,10 @@ class KindCheck:
     survey: str
     max_calls: int = KIND_CALLS
     max_faults: int = KIND_FAULTS
+    # Second version: its brief, and the claimed service's calls computed by code.
+    shapes: Callable[[str], str] | None = None
+    # Third version: the second's, with the question of HTTP against network.
+    v3: bool = False
 
     def __call__(
         self, claim: dict[str, Any], budget: Callable[[float], bool] | None = None
@@ -180,16 +277,32 @@ class KindCheck:
             f"- {e.get('claim', '')}\n  `{e.get('sql', '')}`"
             for e in claim.get("evidence", [])
         )
-        conversation = self.spawn(
-            KIND_SYSTEM.format(
-                data=self.data, rules=self.rules, max_calls=self.max_calls
-            ),
+        system = (
+            KIND_SYSTEM
+            if self.shapes is None
+            else KIND_SYSTEM_V3
+            if self.v3
+            else KIND_SYSTEM_V2
+        )
+        first = (
             KIND_FIRST.format(
                 service=verdict.service,
                 kind=verdict.claimed,
                 evidence=evidence or "- (none given)",
                 survey=self.survey,
-            ),
+            )
+            if self.shapes is None
+            else KIND_FIRST_V2.format(
+                service=verdict.service,
+                kind=verdict.claimed,
+                evidence=evidence or "- (none given)",
+                shapes=self.shapes(verdict.service),
+                survey=self.survey,
+            )
+        )
+        conversation = self.spawn(
+            system.format(data=self.data, rules=self.rules, max_calls=self.max_calls),
+            first,
         )
         data = consult(
             conversation,

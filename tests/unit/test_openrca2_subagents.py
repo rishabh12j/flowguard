@@ -19,6 +19,8 @@ from flowguard.openrca2.design import DATA  # noqa: E402
 from flowguard.openrca2.failures import edge_f1, kind_checks  # noqa: E402
 from flowguard.openrca2.subagents import (  # noqa: E402
     KIND_SYSTEM,
+    KIND_SYSTEM_V2,
+    KIND_SYSTEM_V3,
     SPREAD_SCHEMA,
     VERDICT_SCHEMA,
     KindCheck,
@@ -226,18 +228,29 @@ def test_the_review_reports_agreement_and_missing_findings_too() -> None:
 
 
 def test_the_other_agents_have_no_kind_check() -> None:
-    checked = {n: (a.kind_check, a.spread_check) for n, a in agents().items()}
+    checked = {
+        n: (a.kind_check, a.spread_check, a.kind_v2, a.kind_v3)
+        for n, a in agents().items()
+    }
     assert checked == {
-        "standard": (False, False),
-        "lead": (False, False),
-        "lead+survey": (False, False),
-        "lead+survey+kind": (True, False),
-        "lead+survey+spread": (False, True),
-        "lead+survey+kind+spread": (True, True),
+        "standard": (False, False, False, False),
+        "lead": (False, False, False, False),
+        "lead+survey": (False, False, False, False),
+        "lead+survey+kind": (True, False, False, False),
+        "lead+survey+kind2": (True, False, True, False),
+        "lead+survey+kind3": (True, False, True, True),
+        "lead+survey+spread": (False, True, False, False),
+        "lead+survey+kind+spread": (True, True, False, False),
     }
     # Same lead: only the checks differ, so a change in score is the checks'.
     base = agents()["lead+survey"]
-    for name in ("lead+survey+kind", "lead+survey+spread", "lead+survey+kind+spread"):
+    for name in (
+        "lead+survey+kind",
+        "lead+survey+kind2",
+        "lead+survey+kind3",
+        "lead+survey+spread",
+        "lead+survey+kind+spread",
+    ):
         other = agents()[name]
         assert (other.system, other.answer_prompt) == (base.system, base.answer_prompt)
 
@@ -473,3 +486,100 @@ def test_the_propagation_rules_are_the_contracts_own() -> None:
     assert rules.count("\n- ") + rules.startswith("- ") == 2
     assert "Do NOT use the request-call direction" in rules
     assert "never list them as `root_causes`" in rules
+
+
+# The kind check, second version -------------------------------------------------
+
+
+def test_the_second_version_gets_the_measured_shapes_and_the_call_table() -> None:
+    spawned: list[tuple[str, str]] = []
+    sub = Scripted(0, [finding("network_delay")])
+    v2 = KindCheck(
+        lambda system, first: spawned.append((system, first)) or sub,
+        Tools().run,
+        DATA,
+        kind_rules(agent_contract()),
+        "the survey text",
+        shapes=lambda service: f"THE CALLS OF {service}" + chr(10),
+    )
+    claim = json.loads(answer("http_slow", "search"))["root_causes"][0]
+    assert v2(claim).kind == "network_delay"
+    system, first = spawned[0]
+    # The call table comes before the survey, for the claimed service.
+    assert first.index("THE CALLS OF search") < first.index("the survey text")
+    for words in (
+        "the 25th and 50th percentiles move as much as the 95th",
+        "cannot tell `network_loss` from `network_corrupt`",
+        "either at once",
+        "are not evidence of DNS",
+        "its metrics fallen away",
+        "keep the one claimed unless something else separates them",
+        "The table of the claimed service's calls",
+    ):
+        assert words in system
+    assert "timeouts, resets, connection errors" not in system
+    # Everything else is the first version's, word for word.
+    for words in (
+        "try to disprove it",
+        "*Slow calls to a database.*",
+        "*Slow outgoing calls.*",
+        "*A restart.*",
+        "## How to work",
+    ):
+        assert words in system and words in KIND_SYSTEM
+    assert "the hard cap is 20" in system
+    assert len(KIND_SYSTEM_V2) > len(KIND_SYSTEM)
+
+
+def test_the_first_version_is_unchanged_without_a_call_table() -> None:
+    spawned: list[tuple[str, str]] = []
+    check(Scripted(0, [finding("network_loss")]), spawned)(
+        json.loads(answer("database_call_slow"))["root_causes"][0]
+    )
+    system, first = spawned[0]
+    assert "timeouts, resets, connection errors" in system
+    assert "The table of the claimed service's calls" not in system
+    assert "THE CALLS" not in first
+
+
+# The kind check, third version --------------------------------------------------
+
+
+def test_the_third_version_adds_http_against_network_to_the_second() -> None:
+    spawned: list[tuple[str, str]] = []
+    sub = Scripted(0, [finding("http_slow")])
+    v3 = KindCheck(
+        lambda system, first: spawned.append((system, first)) or sub,
+        Tools().run,
+        DATA,
+        kind_rules(agent_contract()),
+        "the survey text",
+        shapes=lambda service: f"THE CALLS OF {service}" + chr(10),
+        v3=True,
+    )
+    claim = json.loads(answer("network_delay", "search"))["root_causes"][0]
+    assert v3(claim).kind == "http_slow"
+    system, first = spawned[0]
+    assert first.index("THE CALLS OF search") < first.index("the survey text")
+    for words in (
+        "*An HTTP fault or a network fault?*",
+        "the spread between them stays as narrow as before",
+        "`Unexpected end of file from server`",
+        "never as unreadable responses",
+    ):
+        assert words in system and words not in KIND_SYSTEM_V2
+    # The second version's brief is all there, the new question after its own.
+    assert system == KIND_SYSTEM_V3.format(
+        data=DATA, rules=kind_rules(agent_contract()), max_calls=20
+    )
+    for words in (
+        "the 25th and 50th percentiles move as much as the 95th",
+        "*Calls that fail.*",
+        "*Slow calls to a database.*",
+        "The table of the claimed service's calls",
+    ):
+        assert words in system
+    assert system.index("*Calls that fail.*") < system.index("*An HTTP fault or")
+    assert system.index("*An HTTP fault or") < system.index(
+        "*Slow calls to a database.*"
+    )

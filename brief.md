@@ -1641,3 +1641,31 @@ The standard agent on the fixed tool scored 54 (Hotel Reservation 30, OTel Demo 
 ### Phase 5, step 3: the spread check, measured 2026-11-16
 
 Not kept. Judged within its run against the drafts, edge-F1 rose by 0.035 (0.871 → 0.905), short of the 0.05 fixed before the run; exact matches and cost passed. It also seems to have weakened the kind check: the lead took right kind verdicts 9 times in 15, against 16 in 18 in the kind check's run, and the run ended at 66 exact against 72. A likely cause is that the spread check is briefed with, and reports under, the draft's kind. The configuration stays lead, survey and kind check.
+
+### Network-fault study, 2026-11-16
+
+Instead of the checker (sized first: it would flag 17 cases, 14 of them already right, and could add about 0.02 edge-F1 against a bar of 0.05), the user chose to study how network faults show in the data, because 8 of the 11 Hotel Reservation and OTel Demo misses are a wrong network kind. On the development cases, by code: a delay moves every call on the faulty link by about the same amount with no errors (14 of 14, all three systems); loss and corruption leave most calls fast and add a tail in steps of about 200 ms, and cannot be told apart from each other; a partition makes calls fail (at once on Hotel Reservation, at a timeout on TrainTicket) while the service lives; a pod that is down loses all its spans and logs, and on Hotel Reservation its metrics too. The kind check's brief says partly otherwise (it expects errors and timeouts from loss). Details: `docs/openrca2-design.md`, "Network-fault study".
+
+### Phase 5, step 4: the kind check, second version, built 2026-11-16
+
+`--agent lead+survey+kind2`: the kind check's brief corrected with the measured network signatures, and a table computed by code of the claimed service's calls (percentiles, errors, the called service's own time) and of whether each end is still alive. Keep rule, fixed before the run: at least 72 exact matches and no system more than 2 below the first version's run.
+
+### Phase 5, step 4: the kind check, second version, measured 2026-11-16
+
+71 exact on the 100 development cases (Hotel Reservation 31, OTel Demo 6, TrainTicket 34), against 72 (25, 4, 43) for the first version; 4.6 cents a case. The keep rule (at least 72, TrainTicket at least 41) is not met, so by the rule the first version stays. But the second version is the first configuration to pass the check before the held-out test (Hotel Reservation 30, OTel Demo 5, TrainTicket 18), which the first version fails. Case by case the two runs are indistinguishable (11 won, 12 lost). The second version's verdicts are better (21 right corrections, 6 wrong, from 18 and 10), and it fixed the Hotel Reservation and OTel Demo network kinds it was built for; on TrainTicket it read four HTTP faults as network faults, and the lead ignored four right verdicts on network faults to MySQL that it had taken in the first run. Which version goes forward is the user's decision (`docs/openrca2-design.md`, "Phase 5, step 4: the kind check, second version, measured").
+
+### Phase 5, step 5: the kind check, third version, built 2026-11-16
+
+The user chose one quick further try. An HTTP-fault study on the development cases found that `http_slow` shifts every percentile by one fixed amount, while a network delay usually widens the spread; `http_aborted` fails at once with an early end of response, where a TrainTicket partition hangs about 130 s; wrong status codes and corrupted bodies come from a called service that answered as usual, and the caller fails on what it received. The third version (`--agent lead+survey+kind3`) adds this as one question to the second version's brief. Keep rule: at least 72 exact, no system more than 2 below the first version's run; otherwise the user chooses between the first and second versions.
+
+### The plan to the end, and the held-out runner, 2026-11-16
+
+The user set aside the origin check (it could fix at most 6 to 8 of the misses, nearly all of which are a wrong kind) and moved the held-out test to 2026-11-17. The held-out runner is built: `baseline --held-out --shard k/n` answers every held-out case without reading any answer, and `flowguard.openrca2.final` scores both runs once, after every case is answered, and applies the agreed bar (more exact matches than the standard agent, p < 0.05). Scoring from saved answers gives the runner's own scores in 400 of 400 development cases. Estimated cost: about $29 of the $40 set aside.
+
+### Phase 5, step 5: the kind check, third version, measured 2026-11-16
+
+71 exact on the 100 development cases (Hotel Reservation 29, OTel Demo 3, TrainTicket 39), 4.9 cents a case. It misses its keep rule (at least 72, TrainTicket at least 41) and the check before the held-out test (Hotel Reservation 29 against 30, OTel Demo 3 against 5). Its new question did what it was built for: the 16 HTTP-fault cases went from 9 right in the second version to 15 (the first version had 14). The run lost elsewhere, mostly on network faults to MySQL that the lead drafted as database faults and the check did not correct. The three versions scored 72, 71 and 71 and cannot be told apart case by case; per system they swing by up to 9 cases from run to run. The user chooses between the first and second versions (`docs/openrca2-design.md`, "Phase 5, step 5: the kind check, third version, measured").
+
+### Decided by the user, 2026-11-16: the second version goes to the held-out test
+
+The final configuration is the kind check's second version (`--agent lead+survey+kind2`), the only one to pass the check before the held-out test and level with the first version overall. The held-out test on 2026-11-17 runs it and the standard agent on all 355 held-out cases, about $28 estimated with caps of $36, then scores both once against the agreed bar.

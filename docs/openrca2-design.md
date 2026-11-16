@@ -314,7 +314,7 @@ Unchanged from "Decided by the user, 2026-11-13": on the development cases, the 
 | Reserve: one repair run, or overruns | $28 |
 | **Total** | **$100** |
 
-Spent since 2026-11-13, when the limit was set: $14.72 (kind check smoke test $0.04, spread check smoke test $0.04, kind check 100 cases $5.10, standard agent on the fixed tool $3.18 from the reserve, spread check 100 cases $6.36). Each run's `--max-usd` is set to its line here.
+Spent since 2026-11-13, when the limit was set: $24.18 (kind check smoke test $0.04, spread check smoke test $0.04, kind check 100 cases $5.10, standard agent on the fixed tool $3.18 from the reserve, spread check 100 cases $6.36, second kind check smoke test $0.03, second kind check 100 cases $4.57, third kind check 100 cases $4.86). Each run's `--max-usd` is set to its line here.
 
 ### Schedule
 
@@ -468,3 +468,215 @@ A likely cause, read from case-216 and case-125 and not tested: the spread check
 **Consequence.** The configuration stays lead, survey and kind check. The checker is added to it. If spread edges are tried again, the spread check should run after the kind check, use the kind the lead settles on (or none), and report in a separate step; that would be a new part, measured afresh.
 
 **The check before the held-out test.** This run's Hotel Reservation (27) and OTel Demo (5) are nearer the bars (30 and 5) than the kind check's run (25 and 4), but the spread check is not kept, so they don't count toward it.
+
+## The checker, sized before building, 2026-11-16
+
+Before building the checker, its four checks were run by code on the final answers of lead, survey and kind check (the configuration it would join), with evidence re-graded on the fixed tool. Development cases only; no model was called. Script: the scratch `size_checker.py`, results below.
+
+| Check | Fires on |
+|---|---|
+| An evidence query fails or returns no rows | 17 of 683 queries (16 empty, 1 error), in 11 cases |
+| A named service is not in the data | none |
+| An edge joins two services that never call each other | 2 of 303 edges, in 2 cases; neither is a label edge |
+| A named root does not reach an entry service through the answer's edges | 4 cases, 3 of them already exact |
+| **Any of these** | **17 cases, 14 of them already exact** |
+
+- **It cannot reach its keep rule.** The rule asks for edge-F1 up by 0.05. Removing the 2 bad edges and completing the 4 short paths, even generously, adds about 0.02 over 95 cases. On exact match it could act on 3 cases that are wrong, while asking the lead to revisit 14 that are right.
+- **The edge check would misfire on true edges.** 15 of the 384 label edges join services with no call between them in the traces, in either direction (for example a database with no spans of its own), so the check could only report, never remove.
+
+So the checker, as designed, is not worth its run (about $5 to $6). Decision pending with the user.
+
+**Where the remaining misses are instead.** Of the 11 Hotel Reservation and OTel Demo cases the configuration misses, 8 are the wrong kind within or into the network family: `network_delay` read as `network_loss`, `network_partition` or `http_slow` (5), `network_partition` read as `dns_lookup_failed` (2), `pod_unavailable` read as `network_partition` (1). The standard agent got most of them right in all three of its runs. Across systems, a wrong member of the network family is also the largest class on TrainTicket (`network_corrupt` read as `network_loss`, 5). When the kind check disagrees with the draft within the same family, it was right in none of 6 such verdicts over its two runs; across families it was right in 33 of 62.
+
+## Network-fault study, 2026-11-16
+
+**Why.** Of the 11 Hotel Reservation and OTel Demo cases that lead, survey and kind check miss, 8 are a wrong kind within or into the network family, and a wrong network member is also TrainTicket's largest miss class. The study asks how each network fault, and the kinds it is confused with, shows in the telemetry, measured by code at the true faulty service. Development cases only; the injection parameters in `answers/dev` were used to describe the faults, never shown to an agent. Scratch scripts: `net_inventory.py`, `net_study.py`, `net_table.py`, `net_signatures.py`.
+
+**The faults.** Required faults in the 100 development cases:
+
+| Kind | Cases | Systems | Injected |
+|---|---|---|---|
+| network_delay | 14 | Hotel Reservation 9, OTel Demo 2, TrainTicket 3 | 340 to 1,840 ms added, with jitter |
+| network_partition | 10 | Hotel Reservation 2, TrainTicket 8 | all packets dropped |
+| network_loss | 8 | TrainTicket only | 29% to 67% of packets lost |
+| network_corrupt | 5 | TrainTicket only | 27% to 86% of packets corrupted |
+| http_slow | 4 | TrainTicket only | |
+| pod_unavailable | 29 | Hotel Reservation 22, OTel Demo 5, TrainTicket 2 | |
+| dns_lookup_failed, database_call_slow, database_call_failed | 0 | | |
+
+The agents name database and DNS faults; in the development cases they are never the answer.
+
+**Four signatures**, measured on the faulty service's links (its own client calls, to the target where there is one, and its callers' calls into it, whichever moved more):
+
+- **SHIFT:** the middle moved, p50 up by at least 100 ms, with errors at most 5%;
+- **TAIL:** the middle barely moved (p50 up by less than 50 ms) but p95 rose by at least 150 ms, with errors at most 5%;
+- **FAIL:** errors of at least 50%, or a p50 of at least 20 s (timeouts);
+- **GONE:** the service has no spans and no logs in the incident.
+
+| Kind | System | Cases | SHIFT | TAIL | FAIL | GONE | none |
+|---|---|---|---|---|---|---|---|
+| network_delay | Hotel Reservation | 9 | 9 | 0 | 0 | 0 | 0 |
+| network_delay | OTel Demo | 2 | 2 | 0 | 0 | 0 | 0 |
+| network_delay | TrainTicket | 3 | 3 | 0 | 0 | 0 | 0 |
+| http_slow | TrainTicket | 4 | 2 | 3 | 0 | 0 | 0 |
+| network_loss | TrainTicket | 8 | 5 | 5 | 0 | 0 | 2 |
+| network_corrupt | TrainTicket | 5 | 2 | 4 | 0 | 0 | 0 |
+| network_partition | Hotel Reservation | 2 | 0 | 0 | 2 | 0 | 0 |
+| network_partition | TrainTicket | 8 | 0 | 0 | 3 | 1 | 4 |
+| pod_unavailable | Hotel Reservation | 22 | 0 | 0 | 0 | 19 | 3 |
+| pod_unavailable | OTel Demo | 5 | 0 | 0 | 0 | 3 | 2 |
+| pod_unavailable | TrainTicket | 2 | 0 | 0 | 0 | 1 | 1 |
+| pod_failure | TrainTicket | 8 | 0 | 2 | 0 | 0 | 6 |
+
+**What the cases show**, read case by case:
+
+1. **Delay moves the whole link, with no errors.** In all 14 delay cases, on all three systems, the calls over the faulty link became slower by about the injected latency (or a small multiple of it) at the 25th and 50th percentiles, not only at the 95th, and none failed. Where the called service is traced, its own server time did not change: the time went between the caller's span and the callee's. Every kind of traffic on the link slowed, gRPC calls and database queries included. In none of the 14 did the faulty link show a tail alone.
+2. **Loss and corruption add a tail and leave most calls fast.** On the faulty link itself, the median rose by a few milliseconds while p95 rose to about 200, 400 or 600 ms, steps of TCP's retransmission timeout; errors stayed at zero unless loss was heavy (67%: errors and timeouts of minutes). The callers of a service that queries a database many times per request can show a raised median, because each request makes many calls. Loss and corruption look the same in every measure taken here: a corrupted packet fails its checksum and is retransmitted like a lost one. They occur only on TrainTicket in the development cases, so this rests on one system plus the mechanism.
+3. **Partition makes calls fail, while the service lives.** On TrainTicket, calls over the partitioned link end at a timeout (30 s, 60 s, 130 s) with errors, and the service logs connection failures (`Communications link failure`, `Connection is not available`, timeouts). On Hotel Reservation, the caller's calls to the cut-off service fail at once (about 0.01 ms, every call) and the log says only that the call failed; nothing mentions DNS, yet the agent named `dns_lookup_failed` both times.
+4. **A pod that is down disappears; a partitioned one does not.** In 23 of 29 `pod_unavailable` cases the service has no spans and no logs at all in the incident. On Hotel Reservation, callers' calls to a dead service also fail at once, exactly as in a partition; the difference is the service's own metrics. A dead pod's metrics fall to a few rows (448 → 24, 836 → 28, 392 → 22 in a period), while a partitioned pod's keep coming at their normal volume (682 → 488, 370 → 354). On TrainTicket, callers of a dead service log `connection refused`; callers of a partitioned one log timeouts.
+5. **http_slow is not cleanly separated from delay** by these measures: it shows a raised median on two of its four cases and a tail on three. In the development cases it occurs only on TrainTicket, on HTTP calls, while delay also slows gRPC calls and database queries.
+
+**What it means for the kind check.** Of the 8 Hotel Reservation and OTel Demo kind misses, the evidence in the telemetry points to the true kind in 7: four delays called loss, partition or http_slow (SHIFT with no errors and no tail), two partitions called DNS (instant failures, the target's metrics alive, no name-resolution error), and one unavailable pod called a partition (case-059: no spans and no logs at all). The OTel Demo delay called `http_slow` is an HTTP call and stays ambiguous. TrainTicket's `network_corrupt` called `network_loss` cannot be fixed from this telemetry.
+
+### Decided by the user, 2026-11-16: the kind check, second version
+
+Build both parts: (1) correct the kind check's brief with the measured signatures, and (2) give the kind check a table, computed by code, of the claimed service's calls and of whether each end is still alive. The lead, the survey and the review the lead receives are unchanged. It runs as `--agent lead+survey+kind2`; `lead+survey+kind` stays as it was measured.
+
+**Keep rule, fixed before the run.** The second version replaces the first if its run on the 100 development cases has at least 72 exact matches (the first version's run) and no system more than 2 below that run (Hotel Reservation at least 23, OTel Demo at least 2, TrainTicket at least 41). The check before the held-out test (Hotel Reservation at least 30, OTel Demo at least 5, TrainTicket at least 18) is reported alongside it.
+
+## Phase 5, step 4: the kind check, second version, built 2026-11-16
+
+Built and checked offline; not yet run on any case. Run with `--agent lead+survey+kind2`. The lead, the survey, the answer turns and the review the lead receives are those of `lead+survey+kind`.
+
+**1. The brief** (`subagents.KIND_SYSTEM_V2`) is the first version's with four passages replaced, and the code refuses to build it if any of them has changed:
+
+- the network kinds, as the study measured them: delay moves the 25th and 50th percentiles as much as the 95th, with nothing failing; loss and corruption leave the median nearly where it was and add a tail in steps of about 200 ms, and cannot be told apart; a partition makes calls fail, at once or at a timeout, while both ends stay alive. (The first version said loss and corruption cause "timeouts, resets, connection errors" and a partition leaves calls "hanging until a timeout".)
+- the pod kinds: `pod_unavailable` loses its spans and logs, and usually its metrics; `pod_failure` is a kill and restart.
+- DNS: calls failing at once without name-resolution text are not evidence of DNS.
+- two new questions for the pairs it confused: slow calls with nothing failing (delay against loss or corruption, keeping the claimed one of loss and corruption), and calls that fail (partition, a pod that is gone, or DNS).
+
+**2. The call table** (`survey.shapes`), computed by code for the claimed service and put in the check's first message, before the survey:
+
+- each operation a caller sends to a called service, with the claimed service at either end: calls a minute, error share, the caller's p25, p50 and p95, and the called service's own p50, normal against incident; the 12 rows that changed most;
+- where no Server span answered a call, the called service is taken from the same caller's same operation elsewhere in the case when that names one service only (a gRPC method to a service gone silent), and otherwise shown as no traced callee;
+- for the claimed service and up to 7 services on those rows: spans, logs and metric rows a minute, normal against incident.
+
+It gives numbers only and names no kind. On the development cases, for every fault of the first version's 100 drafts (112), it built without error in at most 0.6 s, at most 2,900 characters (about 700 tokens).
+
+**Tests:** the second version's brief holds the new passages and keeps the rest; the first version is unchanged without the table; a hand-built partition (every call failing at once, the callee silent in spans and logs but not in metrics) reads as such in the table, with the callee inferred.
+
+## Phase 5, step 4: the kind check, second version, measured 2026-11-16
+
+`--agent lead+survey+kind2` on the 100 development cases: 71 exact, $4.57 (4.6 cents a case, $1.38 of it the checks). Per case: `reports/openrca2-lead-survey-kind2/`.
+
+| System (cases) | Lead and survey | First version: drafts → finals | Second version: drafts → finals | Spread run | Standard agent, fixed tool |
+|---|---|---|---|---|---|
+| Hotel Reservation (33) | 28 | 24 → 25 | 28 → **31** | 27 | 30 |
+| OTel Demo (7) | 4 | 5 → 4 | 3 → **6** | 5 | 4 |
+| TrainTicket (60) | 30 | 31 → 43 | 29 → **34** | 34 | 20 |
+| All (100) | 62 | 60 → 72 | 60 → **71** | 66 | 54 |
+
+**Keep rule: not met.** It asked for at least 72 exact and TrainTicket at least 41; the run has 71 and 34. By the rule, the first version stays.
+
+**The check before the held-out test: met, for the first time.** Hotel Reservation 31 (bar 30), OTel Demo 6 (bar 5), TrainTicket 18 (bar 18, run has 34). The first version's run fails it on Hotel Reservation (25) and OTel Demo (4).
+
+**Against the first version, case by case:** 11 won, 12 lost (p = 1.0). Overall the two runs cannot be told apart; they differ in where they are right.
+
+**What the check did within its run:** drafts 60 → finals 72 in the first version (16 fixed, 4 broken), 60 → 71 in the second (16 fixed, 5 broken). Its verdicts, where they disagreed with the draft on a true fault's service:
+
+| | First version | Second version |
+|---|---|---|
+| Draft wrong, verdict right | 18 (lead took 16) | 21 (lead took 14) |
+| Draft right, verdict wrong | 10 (lead took 5) | 6 (lead took 5) |
+| Both wrong | 7 | 9 |
+
+The second version's verdicts are better (21 right corrections against 6 wrong ones, from 18 against 10), and the network study's targets moved as intended: the Hotel Reservation and OTel Demo delays called `http_slow` became `network_delay` (case-126, 155, 194, 434), a partition read as a dead pod became a partition (case-311), and DNS claims for a dead pod's callers were dropped (case-171, 398). Two things took TrainTicket's gain away:
+
+1. **HTTP faults read as network faults.** True HTTP faults given a network verdict: 3 in the first version, 5 in the second. Four broke right drafts: `http_slow` → `network_delay` (case-387, 442), `http_aborted` → `network_partition` (case-092), `http_response_body_corrupted` → `network_corrupt` (case-256). The study described only the network kinds; an HTTP fault injected on one endpoint also slows every call to it, or fails it, so the new shapes fit it too. The brief's existing delay-against-HTTP passage was kept, but the new shapes seem to outweigh it.
+2. **The lead kept its draft against right verdicts.** In four TrainTicket cases where a database call failed or slowed because of the network to MySQL (case-125, 216, 274, 339), both versions' checks concluded the same network kind with the same evidence (connection-level JDBC errors, no SQL-layer exception, MySQL serving the other services), and at the same confidence or higher in the second version. The lead took the verdict in all four in the first run and in none of the four in the second. The lead's reasoning is redacted in the transcript, so why is not known. If it were chance at the rate the lead keeps right verdicts overall, four of four would happen about 1 time in 100.
+
+Run-to-run noise is large: the lead's drafts, the same configuration before any check, scored 24 and 28 on Hotel Reservation in the two runs. Of the second version's 6-case lead on Hotel Reservation, 4 are in the drafts.
+
+**Open for the user.** The keep rule keeps the first version; the check before the held-out test passes only with the second. This is the situation decision 2 was left open for.
+
+### Decided by the user, 2026-11-16: one more try, the third version
+
+The user chose to try a third version quickly and then finish, since this work was added to the plan. It is judged by the second version's keep rule, against the first version's run: at least 72 exact, Hotel Reservation at least 23, OTel Demo at least 2, TrainTicket at least 41. The check before the held-out test is reported alongside. If it falls short, the user chooses between the first and the second version.
+
+## HTTP-fault study, 2026-11-16
+
+On the development cases, by code: each required HTTP fault (16, all on TrainTicket) and each delay and partition, on the link the injection names (caller to called service, from `injection.json`). An HTTP fault is injected for one method and route from one caller to one called service; a network fault for one connection (source to target), under every protocol on it. Most TrainTicket links carry a single route, so whether other routes on the link moved can decide only 3 of the 16.
+
+| Kind | Cases | On the faulty link | The caller's error log |
+|---|---|---|---|
+| `http_slow` | 4 | p25, p50 and p95 all up by the injected delay to within about 2% (+2303 ms gives 2324, 2326, 2388); spread unchanged; no errors | none |
+| `network_delay`, Hotel Reservation and TrainTicket | 10 | spread widens with the jitter: p95 well above p50 (TrainTicket 1210 / 1420 / 3132; 355 / 916 / 5752) | none |
+| `network_delay`, OTel Demo | 2 | narrow, like `http_slow` (442 / 442 / 443) | none |
+| `http_aborted` | 3 | fail in about 1 ms with no Server span, or at the called service's usual time | `Unexpected end of file from server` |
+| `network_partition`, TrainTicket service links | 2 | hang about 130 s, then fail | `Connection timed out` |
+| `http_wrong_status_code` | 3 | the called service answered as usual | an HTTP status error (`401 Unauthorized`) |
+| `http_response_body_corrupted` | 6 | the called service answered fast | `HttpMessageNotReadableException`, a 405, a null pointer later |
+
+A narrow, fixed shift does not separate `http_slow` from every delay (OTel Demo's delays are narrow too), but a widening spread separates a delay from `http_slow`. Failures at once with an early end of response are `http_aborted`, not a TrainTicket partition. Unreadable responses come from the application layer: corruption on the network is retransmitted and never reaches the application.
+
+## Phase 5, step 5: the kind check, third version, built 2026-11-16
+
+`--agent lead+survey+kind3`: the second version (brief and call table) with one more question in the brief, *An HTTP fault or a network fault?*, giving the four HTTP kinds' shapes from the study above (`subagents.KIND_SYSTEM_V3`, about 400 tokens more). The lead, the survey, the call table and the review the lead receives are unchanged. It does not address the lead keeping its draft against right verdicts.
+
+## Decided by the user, 2026-11-16: the plan to the end
+
+The origin check is not built. Sized on the development runs, it could help only where the lead names the wrong service: of the kind check's 28 misses, 4 miss a required service and 4 add a wrong one (second version: 4 and 2 of 29); the other 20 to 23 are a wrong kind. That is at most 6 to 8 cases, against a keep bar of 8.
+
+| When | What |
+|---|---|
+| 2026-11-16 | The held-out runner built, while the third version runs |
+| When the third version's run ends | Judged against its keep rule; the final configuration chosen; the check before the held-out test reported |
+| 2026-11-17 | The held-out test: the standard agent and the final configuration |
+| Then | Results and write-up |
+
+## The held-out runner, built 2026-11-16
+
+Built and tested on made-up cases only. No held-out case has been opened, listed or run.
+
+- **Answering, blind:** `python -m flowguard.openrca2.baseline --held-out --shard k/n ...` answers every held-out case (from `split.json`), every n-th one from the k-th in each terminal. It opens the held-out telemetry with `final_test=True` and reads no answer: each record has its answer, draft, checks and transcript, and no scores. A held-out case cannot be named with `--cases` or drawn with `--sample`; held-out cases go only as the whole split. A case that fails is retried by running the same command again, which skips the cases already done.
+- **Scoring, once, at the end:** `python -m flowguard.openrca2.final --standard ... --design ...` refuses to score until both runs have answered every held-out case (or `--count-missing-as-wrong` is given after retries have failed). It then reads the held-out answers, scores each saved answer and draft with the same scorer, and writes the comparison: exact matches and F1 by system, and the paired sign test against the bar agreed on 2026-11-13 (more exact matches than the standard agent, p < 0.05).
+- **Scoring later is the same as scoring at once:** on the four development runs of 100 cases, scoring each saved answer again gave the runner's own scores in 400 of 400 cases, and the drafts' in every case that has one.
+
+**Cost, estimated from the development runs:** the standard agent about 3.2 cents a case and the kind-check configurations 4.6 to 5.1 cents; on 355 cases about $11 and $18, $29 in all, within the $40 set aside. Each terminal's `--max-usd` is set so the caps add up to no more than $40.
+
+## Phase 5, step 5: the kind check, third version, measured 2026-11-16
+
+`--agent lead+survey+kind3` on the 100 development cases: 71 exact, $4.86 (4.9 cents a case, 2.3 minutes). Per case: `reports/openrca2-lead-survey-kind3/`.
+
+| System (cases) | First version: drafts → finals | Second version: drafts → finals | Third version: drafts → finals | Standard agent, fixed tool |
+|---|---|---|---|---|
+| Hotel Reservation (33) | 24 → 25 | 28 → 31 | 26 → **29** | 30 |
+| OTel Demo (7) | 5 → 4 | 3 → 6 | 6 → **3** | 4 |
+| TrainTicket (60) | 31 → 43 | 29 → 34 | 33 → **39** | 20 |
+| All (100) | 60 → 72 | 60 → 71 | 65 → **71** | 54 |
+
+**Keep rule: not met.** It asked for at least 72 exact and TrainTicket at least 41; the run has 71 and 39.
+
+**The check before the held-out test: not met.** Hotel Reservation 29 (bar 30) and OTel Demo 3 (bar 5).
+
+**Case by case:** against the first version 10 won, 11 lost; against the second 9 won, 9 lost (p = 1.0 both). Against the standard agent 21 won, 4 lost (p = 0.001).
+
+**What the new question did.** On the 16 cases with a required HTTP fault (all TrainTicket), the finals were right in 14 (first version), 9 (second) and 15 (third): the confusion it was built for is gone, and in no HTTP case did the check break a right draft. The run's TrainTicket losses against the first version are elsewhere: of the 8, 6 had a wrong draft the check did not correct (a network fault to MySQL or between services drafted as a slow or failed database call, in case-125, 146, 274, 296 and 339), one was a right draft (`pod_unavailable`, case-106) the check turned into a partition, and one blamed the wrong service. In OTel Demo the check broke 3 right drafts.
+
+**Three runs, one total.** Three versions of the check scored 72, 71 and 71, and no pair differs case by case (p = 1.0). Per system they swing far more: TrainTicket 43, 34, 39 and Hotel Reservation 25, 31, 29. The drafts, written before any check by the same lead with the same survey, already range 24 to 28 on Hotel Reservation and 29 to 33 on TrainTicket. So one run's per-system count is a noisy reading, and the check before the held-out test, applied to a single run, can pass or fail on the same configuration.
+
+**Open for the user, as decided:** the third version falls short, so the first version (72; fails the check before the held-out test on Hotel Reservation and OTel Demo) or the second (71; passes it) goes to the held-out test.
+
+## Decided by the user, 2026-11-16: the second version goes to the held-out test
+
+The final configuration is `--agent lead+survey+kind2`: the only one to pass the check before the held-out test, level with the first version overall (71 against 72, p = 1.0), with the fewest cases lost to the standard agent (2) and the lowest cost. Known weakness, from the development cases: it read HTTP faults as network faults (9 of 16 HTTP-fault cases right, against 14 and 15 for the other versions).
+
+**The held-out test, 2026-11-17.** Both runs answer all 355 held-out cases blind, in shards that start together in fresh folders; then `flowguard.openrca2.final` scores both once and applies the bar.
+
+| Run | Agent | Shards | `--max-usd` per shard | Estimate |
+|---|---|---|---|---|
+| Standard agent | `standard` | 2 | $7 | about $11, about 3.5 h |
+| Final design | `lead+survey+kind2` | 4 | $5.50 | about $16, about 3.5 h |
+| **Caps in all** | | | **$36**, within the $40 set aside | about $28 |
+
+Each terminal counts what its folder had spent when it started, so a shard started late, or a retry of failed cases, is given the folder's whole cap ($14 for the standard agent, $22 for the design) and stops when the folder reaches it.

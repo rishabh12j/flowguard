@@ -39,7 +39,7 @@ from typing import Any
 
 import duckdb
 
-from flowguard.openrca2.access import CaseTelemetry
+from flowguard.openrca2.access import HELD_OUT, CaseTelemetry
 from flowguard.openrca2.chat import (
     Conversation,
     ModelFailed,
@@ -61,7 +61,7 @@ from flowguard.openrca2.subagents import (
     review,
     review_all,
 )
-from flowguard.openrca2.survey import calls, entries, survey
+from flowguard.openrca2.survey import calls, entries, shapes, survey
 
 PROMPTS = Path(__file__).parent / "prompts"
 MAX_CALLS = 100
@@ -574,6 +574,40 @@ def sample(split: list[dict[str, str]], n: int, seed: int = SAMPLE_SEED) -> list
     return sorted(chosen)
 
 
+def choose_cases(
+    split: list[dict[str, str]],
+    *,
+    sample_n: int | None = None,
+    cases: str | None = None,
+    held_out: bool = False,
+    shard: str | None = None,
+) -> list[str]:
+    """The run's case IDs, in order. Held-out cases go only as the whole split.
+
+    `shard` is `k/n`: every n-th case from the k-th, so that n terminals share a run.
+    """
+    if held_out:
+        chosen = sorted(c["id"] for c in split if c["split"] == HELD_OUT)
+    else:
+        chosen = (
+            sample(split, sample_n)
+            if sample_n
+            else [c.strip() for c in (cases or "").split(",") if c.strip()]
+        )
+        dev = {c["id"] for c in split if c["split"] == "dev"}
+        if not set(chosen) <= dev:
+            raise SystemExit(
+                "--cases and --sample take development cases only; "
+                "the held-out cases run only as the whole split, with --held-out"
+            )
+    if shard:
+        k, n = (int(x) for x in shard.split("/"))
+        if not 1 <= k <= n:
+            raise SystemExit(f"--shard {shard}: give k/n with 1 <= k <= n")
+        chosen = chosen[k - 1 :: n]
+    return chosen
+
+
 def make_conversation(
     provider: str,
     model: str,
@@ -616,6 +650,16 @@ def main() -> int:
         help="this many development cases, drawn with the fixed seed",
     )
     group.add_argument("--cases", help="development case IDs, comma-separated")
+    group.add_argument(
+        "--held-out",
+        action="store_true",
+        help="the final test: every held-out case, answered without reading any answer "
+        "(scored afterwards, once, by flowguard.openrca2.final)",
+    )
+    parser.add_argument(
+        "--shard",
+        help="k/n: this terminal's share of the cases, every n-th from the k-th",
+    )
     parser.add_argument("--max-calls", type=int, default=MAX_CALLS)
     parser.add_argument(
         "--max-usd",
@@ -657,14 +701,17 @@ def main() -> int:
         )
 
     split = json.loads((args.root / "split.json").read_text(encoding="utf-8"))["cases"]
-    dev_ids = {c["id"] for c in split if c["split"] == "dev"}
-    cases = (
-        sample(split, args.sample)
-        if args.sample
-        else [c.strip() for c in args.cases.split(",")]
+    cases = choose_cases(
+        split,
+        sample_n=args.sample,
+        cases=args.cases,
+        held_out=args.held_out,
+        shard=args.shard,
     )
-    if not set(cases) <= dev_ids:
-        raise SystemExit("phase 3 runs development cases only")
+    # In the final test no answer is read until every case is answered.
+    held_out = bool(args.held_out)
+    telemetry = args.root / "telemetry" / (HELD_OUT if held_out else "dev")
+    system_of = {c["id"]: c["system"] for c in split}
     if args.provider == "claude" and args.max_usd is None:
         raise SystemExit("a paid run needs --max-usd")
     if args.capture:
@@ -694,9 +741,9 @@ def main() -> int:
         if args.max_usd is not None and spent >= args.max_usd:
             print(f"stopped: ${spent:.2f} spent of ${args.max_usd:.2f}")
             break
-        truth = load_truth(args.root / "answers" / "dev", case_id)
-        tools = Tools(CaseTelemetry(args.root / "telemetry" / "dev", case_id))
-        case = CaseTelemetry(args.root / "telemetry" / "dev", case_id)
+        truth = None if held_out else load_truth(args.root / "answers" / "dev", case_id)
+        tools = Tools(CaseTelemetry(telemetry, case_id, final_test=held_out))
+        case = CaseTelemetry(telemetry, case_id, final_test=held_out)
         conversation = new(agent.system, agent.first(case), case_id)
         limit = args.max_usd
         check, spread_check = None, None
@@ -708,9 +755,19 @@ def main() -> int:
             def spawn(system: str, first: str, case_id: str = case_id) -> Conversation:
                 return new(system, first, f"{case_id}-check")
 
+            # Bound now, like spawn: the claimed service's calls in this case.
+            def calls_of(service: str, con: Any = con) -> str:
+                return shapes(con, service)
+
             if agent.kind_check:
                 check = KindCheck(
-                    spawn, tools.run, DATA, kind_rules(agent_contract()), surveyed
+                    spawn,
+                    tools.run,
+                    DATA,
+                    kind_rules(agent_contract()),
+                    surveyed,
+                    shapes=calls_of if agent.kind_v2 else None,
+                    v3=agent.kind_v3,
                 )
             if agent.spread_check:
                 spread_check = SpreadCheck(
@@ -753,7 +810,7 @@ def main() -> int:
             continue
         (args.out / f"failed-{case_id}.json").unlink(missing_ok=True)
         spent += run.usage.usd
-        scores = score(run.answer, truth)
+        scores = None if truth is None else score(run.answer, truth)
         evidence = []
         if run.answer is not None:
             data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", run.raw))
@@ -764,7 +821,8 @@ def main() -> int:
                 ]
         record = {
             "case": case_id,
-            "system": truth.system,
+            "split": HELD_OUT if held_out else "dev",
+            "system": system_of[case_id],
             "model": f"{args.provider}:{args.model}",
             "agent": agent.name,
             "json_answer": args.json_answer,
@@ -785,7 +843,9 @@ def main() -> int:
         if run.draft is not None:
             # What the answer was before the kind check, and what each check found.
             record["draft"] = run.draft
-            record["draft_scores"] = score(read_answer(run.draft)[0], truth)
+            record["draft_scores"] = (
+                None if truth is None else score(read_answer(run.draft)[0], truth)
+            )
             record["second_answer"] = run.second_answer
             record["kind_checks"] = [v.record() for v in run.verdicts]
             record["spread_checks"] = [s.record() for s in run.spreads]
@@ -801,9 +861,14 @@ def main() -> int:
             newline="\n",
         )
         print(
-            f"{case_id} ({truth.system}): {sum(run.calls.values())} calls, {run.turns} turns, "
+            f"{case_id} ({system_of[case_id]}): {sum(run.calls.values())} calls, {run.turns} turns, "
             f"{run.usage.prompt:,} prompt + {run.usage.output:,} output tokens, ${run.usage.usd:.3f}, "
-            f"{run.seconds:.0f} s; acc {scores['acc']:.0f} f1 {scores['f1']:.2f} any-hit {scores['any_hit']:.0f}"
+            f"{run.seconds:.0f} s"
+            + (
+                f"; acc {scores['acc']:.0f} f1 {scores['f1']:.2f} any-hit {scores['any_hit']:.0f}"
+                if scores
+                else f"; ${spent:.2f} spent in this folder"
+            )
             + (f"; {'; '.join(sorted(set(run.notes)))}" if run.notes else "")
         )
 
@@ -818,22 +883,32 @@ def write_summary(out: Path) -> None:
     ]
     if not records:
         return
-    means = summarise([r["scores"] for r in records])
-    lines = [
-        f"# Baseline run: {records[0]['model']}, {len(records)} development cases\n"
-    ]
-    lines.append("| Score | Mean |\n|---|---|")
-    lines += [f"| {k} | {v:.3f} |" for k, v in means.items()]
+    scored = [r["scores"] for r in records if r["scores"] is not None]
+    which = "held-out" if records[0].get("split") == HELD_OUT else "development"
+    lines = [f"# Baseline run: {records[0]['model']}, {len(records)} {which} cases\n"]
+    if len(scored) < len(records):
+        lines.append(
+            f"{len(records) - len(scored)} cases are not scored yet: the final test reads "
+            "no answer until every case is answered (`python -m flowguard.openrca2.final`).\n"
+        )
+    if scored:
+        lines.append("| Score | Mean |\n|---|---|")
+        lines += [f"| {k} | {v:.3f} |" for k, v in summarise(scored).items()]
     lines.append(
         "\n| Case | System | Calls | Turns | Prompt tokens | Output tokens | USD | Seconds | acc | f1 | any-hit | Stopped | Notes |"
     )
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in records:
         s = r["scores"]
+        acc, f1, hit = (
+            (f"{s['acc']:.0f}", f"{s['f1']:.2f}", f"{s['any_hit']:.0f}")
+            if s
+            else ("-", "-", "-")
+        )
         lines.append(
             f"| {r['case']} | {r['system']} | {sum(r['tool_calls'].values())} | {r['turns']} | {r['usage']['prompt']:,} | "
-            f"{r['usage']['output']:,} | {r['usage']['usd']:.3f} | {r['seconds']:.0f} | {s['acc']:.0f} | {s['f1']:.2f} | "
-            f"{s['any_hit']:.0f} | {r['stopped']} | {'; '.join(r['notes'])} |"
+            f"{r['usage']['output']:,} | {r['usage']['usd']:.3f} | {r['seconds']:.0f} | {acc} | {f1} | "
+            f"{hit} | {r['stopped']} | {'; '.join(r['notes'])} |"
         )
     usd = sum(r["usage"]["usd"] for r in records)
     lines.append(

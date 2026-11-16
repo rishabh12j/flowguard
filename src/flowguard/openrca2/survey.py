@@ -380,3 +380,138 @@ def survey(con: duckdb.DuckDBPyConnection) -> str:
             for p in shown_pairs[:MAX_CONNECTIONS]
         ]
     return "\n".join(lines) + "\n"
+
+
+# The claimed service's calls, for the kind check (second version) ---------------
+
+MAX_SHAPES = 12
+NO_CALLEE = "(no traced callee)"
+
+_ENDPOINTS = """WITH ends AS (
+  SELECT '{{p}}' AS p, c.service_name AS caller, s.service_name AS callee, c.span_name AS op,
+         c.duration / 1e6 AS cd, s.duration / 1e6 AS sd, CASE WHEN {err} THEN 1 ELSE 0 END AS err
+  FROM {{p}}_traces c
+  LEFT JOIN {{p}}_traces s
+    ON s.trace_id = c.trace_id AND s.parent_span_id = c.span_id AND s."attr.span_kind" = 'Server'
+  WHERE c."attr.span_kind" = 'Client'
+), known AS (
+  SELECT caller, op, min(callee) AS callee FROM ({{both}}) WHERE callee IS NOT NULL
+  GROUP BY 1, 2 HAVING count(DISTINCT callee) = 1
+)
+SELECT e.caller, coalesce(e.callee, k.callee, '{none}'), e.op, count(*), avg(e.err),
+       quantile_cont(e.cd, 0.25), quantile_cont(e.cd, 0.5), quantile_cont(e.cd, 0.95),
+       quantile_cont(e.sd, 0.5)
+FROM ends e LEFT JOIN known k ON k.caller = e.caller AND k.op = e.op
+GROUP BY 1, 2, 3"""
+
+
+def _endpoints(
+    con: duckdb.DuckDBPyConnection,
+) -> dict[tuple[str, str, str], list[Any]]:
+    """Every (caller, called, operation) with its numbers in both periods.
+
+    A Client span that no Server span answered has no called service. Where the
+    same caller and operation reach one service only, in either period, that
+    service is taken as the called one (a gRPC method to a service that has gone
+    silent); otherwise it is shown as having no traced callee.
+    """
+    minutes = {p: _minutes(con, p) for p in ("normal", "abnormal")}
+    err = ERROR.replace('"attr.', 'c."attr.')
+    both = " UNION ALL ".join(
+        f"""SELECT c.service_name AS caller, c.span_name AS op, s.service_name AS callee
+            FROM {p}_traces c LEFT JOIN {p}_traces s
+              ON s.trace_id = c.trace_id AND s.parent_span_id = c.span_id AND s."attr.span_kind" = 'Server'
+            WHERE c."attr.span_kind" = 'Client'"""
+        for p in ("normal", "abnormal")
+    )
+    out: dict[tuple[str, str, str], list[Any]] = {}
+    for i, p in enumerate(("normal", "abnormal")):
+        sql = _ENDPOINTS.format(err=err, none=NO_CALLEE).format(p=p, both=both)
+        for caller, callee, op, n, e, p25, p50, p95, srv in _rows(con, sql):
+            if not caller or norm(caller) in LOADGEN:
+                continue
+            values = out.setdefault((caller, callee, op), [None] * 12)
+            # rate, errors, p25, p50, p95, server p50: normal at even places, abnormal at odd
+            for j, v in enumerate((n / minutes[p], e, p25, p50, p95, srv)):
+                values[2 * j + i] = v
+    return out
+
+
+def _activity(con: duckdb.DuckDBPyConnection, service: str) -> list[float]:
+    out = []
+    for p in ("normal", "abnormal"):
+        minutes = _minutes(con, p)
+        for table in ("traces", "logs", "metrics"):
+            row = con.execute(
+                f"SELECT count(*) FROM {p}_{table} WHERE service_name = ?", [service]
+            ).fetchone()
+            out.append((row[0] if row else 0) / minutes)
+    # spans n, logs n, metrics n, spans a, logs a, metrics a -> pairs
+    return [out[0], out[3], out[1], out[4], out[2], out[5]]
+
+
+def shapes(con: duckdb.DuckDBPyConnection, service: str) -> str:
+    """The calls to and from one service, and whether each end is alive, as text.
+
+    For the kind check: the shape of a fault's effect on the calls (does the middle
+    move or only the tail, do calls fail at once or at a timeout) and whether the
+    services at each end go on working. Numbers only; it names no kind.
+    """
+    target = norm(service)
+    rows = [
+        (key, v)
+        for key, v in _endpoints(con).items()
+        if norm(key[0]) == target or norm(key[1]) == target
+    ]
+
+    def moved(item: tuple[tuple[str, str, str], list[Any]]) -> float:
+        v = item[1]
+        return max(
+            _change(v[0], v[1]),
+            5 * abs((v[3] or 0) - (v[2] or 0)),
+            _change(v[6], v[7]),
+            _change(v[8], v[9]),
+        )
+
+    shown = sorted(rows, key=lambda kv: (-moved(kv), tuple(map(str, kv[0]))))[
+        :MAX_SHAPES
+    ]
+    lines = [
+        f"### The calls of `{service}`, computed by code",
+        "",
+        "Each row is one operation a caller sends to a called service, normal → incident. "
+        "Times are the caller's Client span in milliseconds, at the 25th, 50th and 95th percentiles; "
+        "the last column is the called service's own Server span, so the difference is time spent between the two ends. "
+        f"A dash means none in that period; `{NO_CALLEE}` means no Server span answered "
+        "(a database or another untraced peer, or a callee that did not reply). "
+        f"The {len(shown)} rows that changed most of {len(rows)}.",
+        "",
+        "| Caller | Called | Operation | Calls/min | Error share | p25 | p50 | p95 | Called's own p50 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    if not shown:
+        lines.append("| - | - | no Client spans to or from this service | | | | | | |")
+    peers: list[str] = []
+    for (caller, callee, op), v in shown:
+        lines.append(
+            f"| {caller} | {callee} | {str(op or '-')[:60]} | {_pair(v[0], v[1])} | {_pair(v[2], v[3], 2)} "
+            f"| {_pair(v[4], v[5])} | {_pair(v[6], v[7])} | {_pair(v[8], v[9])} | {_pair(v[10], v[11])} |"
+        )
+        for name in (caller, callee):
+            if name != NO_CALLEE and name not in peers:
+                peers.append(name)
+    named = [p for p in peers if norm(p) == target] or [service]
+    ends = named + sorted(p for p in peers if norm(p) != target)[:7]
+    lines += [
+        "",
+        "### Is each end still working? Rows a minute, normal → incident",
+        "",
+        "| Service | Spans | Logs | Metric rows |",
+        "|---|---|---|---|",
+    ]
+    for name in ends:
+        a = _activity(con, name)
+        lines.append(
+            f"| {name} | {_pair(a[0], a[1])} | {_pair(a[2], a[3])} | {_pair(a[4], a[5])} |"
+        )
+    return "\n".join(lines) + "\n"
