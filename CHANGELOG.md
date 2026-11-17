@@ -284,3 +284,5 @@
 
 - Ran the held-out test once, blind: the final design (`lead+survey+kind2`) made 245 exact matches on the 355 held-out cases against 186 for the standard agent on the same model (77 won, 18 lost, p = 7 × 10⁻¹⁰), so the agreed bar is met. Results in `docs/openrca2-results.md`; the held-out cases are spent.
 - The final scoring step now also scores every answer under the public scorer's rule, that every injected fault is required (`scores_public`), and reports it in a second table; scores already saved are not recomputed.
+
+- Rewrote the README as the project's front page: the copilot on synthetic incidents, the failed check on real logs, the restart against OpenRCA 2.0, and the held-out result with its limits. The copilot's former README is now `docs/flowguard-copilot.md`.

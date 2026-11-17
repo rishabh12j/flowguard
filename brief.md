@@ -1673,3 +1673,7 @@ The final configuration is the kind check's second version (`--agent lead+survey
 ### The held-out test, 2026-11-16: the bar is met
 
 The final design (`lead+survey+kind2`) and the standard agent each answered the 355 held-out cases once, blind, on Claude Haiku 5.5, and were scored once. The design made 245 exact matches (69.0%) against 186 (52.4%); case by case it won 77 and lost 18 (p = 7 × 10⁻¹⁰). The agreed bar, more exact matches with p < 0.05, is met. The gain is in TrainTicket (122 against 73 of 215) and OTel Demo (20 against 12 of 25); Hotel Reservation is level (103 against 101 of 115). It is in the kind of fault, where the kind check fixed 60 drafts and broke 13. It costs 4.7 cents and 2.2 minutes a case against 3.0 cents and 1.3 minutes. It is not a leaderboard result: the published rows are on older data, and a claim there needs a submission. The held-out cases are spent. Full result: `docs/openrca2-results.md`.
+
+### The write-up, 2026-11-17
+
+The README now tells the whole project: stage 1, the copilot on synthetic incidents; the RCAEval check that it failed on real logs; and stage 2, the agents for OpenRCA 2.0, developed on 100 cases and tested once on 355 (245 exact against the standard agent's 186). It states what the result does not show: no leaderboard claim, one run on one model, no gain on Hotel Reservation, and no real production incidents. The copilot's README moved to `docs/flowguard-copilot.md`.

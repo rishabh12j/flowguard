@@ -1,187 +1,154 @@
 # FlowGuard
 
-An incident-response copilot for enterprise integration failures. Given an incident, FlowGuard gathers evidence through MCP tools, retrieves runbooks and past incidents, names a root cause, or abstains, by rules that code applies to the model's answers, and plans a fix that a person must approve before anything changes.
+FlowGuard finds what caused a production incident. It reads the incident's telemetry (logs, traces and metrics), names the faulty service and the kind of fault, and traces how the failure spread.
 
-It runs on a local model (`gemma4:12b` through Ollama), and every step it takes is saved in an append-only audit record.
+It began as an incident-response copilot tested on synthetic incidents. When it was checked on real logs, it failed, so the project changed course and rebuilt it as a team of agents for [OpenRCA 2.0](https://huggingface.co/datasets/anon-ops/ops-lite), a public benchmark of faults injected into running microservice systems. The agents were developed on 100 of the benchmark's cases, then tested once, blind, on the other 355:
 
-```
-Incident  →  logs, deployments, alerts, metrics, dependency map   (MCP tools)
-          →  runbooks, API specs, past incidents                  (RAG over Qdrant)
-          →  root cause: what failed, which change explains it    (Gemma answers, code decides)
-          →  remediation plan, checked against an action catalogue
-          →  pause for human approval  →  audit trail
-```
-
-## What it does well, and what it doesn't
-
-FlowGuard with `gemma4:12b` on `data/benchmark-2031`: 300 test incidents from 30 scenario families that no model saw during development, run once from a tagged commit, with the terms fixed beforehand. Since 2026-11-11 FlowGuard diagnoses with the explain path; the rubric it replaced ran on the same incidents. To compare a local model with a hosted one, Claude Sonnet 5.5 then ran the explain path on the same incidents, under the same code.
-
-| | Gemma, explain path (default) | Sonnet 5.5, explain path | Gemma, rubric (before) |
+| On 355 held-out cases, Claude Haiku 5.5 | Exact root cause | Cost a case | Time a case |
 |---|---|---|---|
-| Diagnosed correctly, of 240 with a cause | **206, 86%** (81% to 90%; 70% to 94% counting each family as one scenario) | 217, 90% (86% to 94%; 76% to 96%) | 139, 58% |
-| … where a change came first (180) | 161 | 176 | 139 |
-| … where nothing changed (60) | 45 | 41 | 0, by construction |
-| Wrong diagnoses | 31 (30, and 1 of the 60 without a cause) | **1** | 23 |
-| Right when it gave an answer | 87% (206 of 237) | 99.5% (217 of 218) | 86% (139 of 162) |
-| Abstained where there's no cause | 59 of 60 | 60 of 60 | 60 of 60 |
-| Unsafe actions planned, approval bypasses | **0, 0** | 0, 0 | 0, 0 |
-| Abstained when its logs were withheld | 300 of 300 | 300 of 300 | 300 of 300 |
-| Plan includes the reference fix steps | 67% | 75% | 54% |
-| Median time per investigation | 48 s | 11 s | 39 s |
-| Cost of the 300 | nothing per call, local | $6.27, about 2 cents an incident | nothing per call, local |
+| The benchmark's standard agent | 186 (52.4%) | 3.0 cents | 1.3 min |
+| **FlowGuard** | **245 (69.0%)** | 4.7 cents | 2.2 min |
 
-The explain path asks Gemma two questions: what failed, from the symptoms alone, and which change, if any, explains it. Code decides from the answers. It stopped the rubric's main mistake, blaming the release that only triggered a different failure, and it diagnoses causes with nothing changed before them, which the rubric can't. 29 of its 31 wrong answers came from four families, where Gemma named the failure by its surface symptom: a truncated upload as a timeout (10 of 10), a poison message as a schema mismatch (10 of 10), a changed filename pattern as a schema or data problem (6), and a receiver that stopped polling as a queue problem (3). Its plans propose more fixes the reference doesn't have than the rubric's did (39 against 18), all held for approval. One of the five marks fixed before the run, precision, was worded ambiguously: read as the share of answers that were right, the explain path passes (87% against 86%); read literally, counting right abstentions too, it misses by 0.1 points. The switch was decided after seeing that ([brief](brief.md), section 14).
+On the same model, cases, tools and scorer, FlowGuard was right in 77 cases where the standard agent was wrong, and wrong in 18 where it was right (paired sign test p ≈ 7 × 10⁻¹⁰). The full result, with its limits, is in [`docs/openrca2-results.md`](docs/openrca2-results.md).
 
-Sonnet's real advantage is that its answers can be trusted. It was wrong once in 218 answers, where Gemma was wrong once in eight. Its extra right diagnoses (217 against 206) are within what one run can't tell from chance. It got right the families where Gemma named the surface symptom, and its own 22 misses were all abstentions after a right reading: mostly causes with nothing changed, where it said nothing in the evidence explains the failure. It was four times faster, at about 2 cents an incident. Gemma stays FlowGuard's model, as fixed before the run. The incidents are synthetic, and one person wrote both them and FlowGuard. [`docs/evaluation.md`](docs/evaluation.md#benchmark-2031) has the details.
+## The story
 
-### The earlier benchmark
+### Stage 1: a copilot on synthetic incidents
 
-Before that, with the rubric deciding, on a generated benchmark: 250 test incidents from 11 scenario families that were never used during development, run once, with nothing changed afterwards.
+The first FlowGuard handled failures in enterprise integration flows. Given an incident, it gathered logs, deployments, alerts and metrics through MCP tools, retrieved runbooks and past incidents, named a root cause or abstained, and planned a fix that a person had to approve. It ran on a local model (`gemma4:12b`), and code, not the model, made the final decision from the model's answers.
 
-| | Test set (250) |
-|---|---|
-| Diagnosed correctly | **186 of 228, 82%** (95% interval 76% to 86%; 62% to 92% counting each family as one scenario) |
-| Abstained where the evidence supports no cause | 22 of 22 |
-| Abstained wrongly | 2% |
-| Required evidence gathered | 100% |
-| Unsafe actions planned | **0** |
-| Approval bypasses | **0** |
-| Abstained when its logs were withheld | 250 of 250 |
-| Plan includes the reference fix steps | 80% |
-| Confidence separates right answers from wrong | **No**: AUROC 0.34, where 0.5 is chance. A fix chosen afterwards scored 0.50 on fresh incidents |
-| Median time per investigation | 46 s |
+It was measured on generated benchmarks, each test set run once with the pass marks fixed beforehand. It diagnosed 82% of the incidents with a cause in one test set and 86% in a second, larger one, planned no unsafe action and never bypassed approval. It also showed its limits. Its confidence score did not separate right answers from wrong ones, and both a fix to that score and a new decision rule failed their one check on fresh incidents. And one person had written both the incidents and the system. Stage 1 is described in [`docs/flowguard-copilot.md`](docs/flowguard-copilot.md) and [`docs/project-report.md`](docs/project-report.md).
 
-Seven of the eleven families were diagnosed 99% of the time. The misses came from four. In two, Gemma named the release that triggered the failure, not what broke: a dropped index or a cut replica count. Even then, its plan rolled back the right release in 21 of 22 cases. In encoding_change, Gemma mixed up a file's encoding with its schema. In provider_outage, Gemma sometimes abstained when the evidence did support the cause. On the 55 development incidents it scored 92%, so the test set found a real drop. The confidence score is also misleading: answers at 0.9 or above were right 13 of 27 times, and answers at 0.65 were right 52 of 52 times, because the rubric rewards citing a release. Reporting confidence as the lead over the best rival in another category looked better on a development set, then failed its one check on 110 fresh incidents (AUROC 0.50), so confidence still says nothing about whether an answer is right. The incidents are synthetic, and one person wrote both them and FlowGuard. Variants of one family behave alike, so the honest interval counts families, not incidents. Two later sets of 110 fresh incidents from the same families scored 80% and 89%. A decision rule that scores all the cited evidence together failed its one pre-registered check on the second (Gemma gained only 2 diagnoses, Sonnet made 2 more wrong ones), so the rubric stays. The benchmark also makes some things easy: every incident has an exact precedent in the knowledge base, and only incidents with a cause have a change before the failure, so a new benchmark of 40 families was built for the next number, above. [`docs/evaluation.md`](docs/evaluation.md#benchmark) has the details and the limits.
+### The turning point: real logs
 
-Before the benchmark, FlowGuard was tuned on five hand-written incidents, and three more were held out and evaluated once:
+On 2026-11-12, FlowGuard was checked on logs it had not been written for: [RCAEval](https://doi.org/10.5281/zenodo.14590730) RE3, real microservice logs with injected code faults. Its rules were tuned on one system (Sock Shop) and tested on two others. It named the faulty service in 33 of 60 cases, below the 50% of always guessing the most common faulty service. The cause was a design choice: a heuristic shortlist of suspect services was a hard limit on the answer, and the real faulty service was on it in only 33 cases.
 
-| | Tuning set (5) | Held out (3) |
+The project's objective was a tool that finds what caused a real incident, and the synthetic scores had hidden how far it was from that. So the project started again, with three lessons: a heuristic may guide the model but never limit its answer, nothing is fixed on one system's evidence, and the test must be on data the project did not write.
+
+### Stage 2: agents for OpenRCA 2.0
+
+OpenRCA 2.0 (version 2.1.0) holds 455 incidents from three systems: TrainTicket (275), Hotel Reservation (148) and the OpenTelemetry Demo (32). Each is one or more faults injected into a running system, such as network delay, packet loss, a killed pod or a slow HTTP endpoint, with its logs, traces and metrics as Parquet tables. The answer gives each fault's service and kind, and the path the failure took.
+
+The work went in fixed phases, each reviewed before the next:
+
+1. **Set the rules.** Before any case was read, the cases were renamed and shuffled, and 100 were drawn as development cases. The other 355 were held out: not opened, listed or summarised until the final test.
+2. **Read the task and study the data.** The public scoring code does not know the labels' new fault roles, so a scorer was written to the published definitions. A study of the development cases found that agents almost always find the faulty service but name the wrong kind of fault.
+3. **Measure the baseline.** The benchmark's standard agent, a single model in a loop with SQL tools, was rebuilt and run twice on the development cases: 56 exact each time on Claude Haiku 5.5.
+4. **Design, then build one part at a time.** Each part was kept only if it beat the configuration before it by a margin fixed in advance.
+5. **Test once.** The chosen configuration and the standard agent each answered all 355 held-out cases before any answer was read. Then both were scored once.
+
+| Part, on 100 development cases | Exact | Kept |
 |---|---|---|
-| Diagnosed correctly | 5 of 5 (3 of 5 before tuning) | **3 of 3** |
-| Plan includes the reference fix steps | 80% | **67%**: two plans had no fixing step |
-| Required evidence gathered | 100% | 100% |
-| Unsafe actions planned | 0 | 0 |
-| Approval bypasses | 0 | 0 |
-| Abstained when its logs were withheld | 5 of 5 | 3 of 3 |
-| Median time per investigation | 46 s | 60 s |
+| Standard agent (three runs) | 56, 56, 54 | The baseline |
+| Lead agent | 50 | As the base for the rest |
+| + code survey | 62 | Yes |
+| + kind check | 72 | Yes |
+| + spread check (traces the failure's path) | 66 | No: missed its bar |
+| Kind check, second version (measured fault signatures) | 71 | **Final**: the only version to pass the per-system check before the test |
+| Kind check, third version (HTTP against network faults) | 71 | No |
 
-Eight incidents is a small sample, which is why the benchmark was built. Every run is kept in [`reports/`](reports/).
+A checker and an origin check were sized from the misses and not built, because they could fix too few cases.
 
-FlowGuard **recommends**: an approved plan is recorded, not run. There is no authentication, so anyone who can reach the API can approve. See [the threat model](docs/threat-model.md) for what that means.
+## How it works
 
-## Quick start
-
-You need [Ollama](https://ollama.com) with the model pulled (8 GB):
-
-```powershell
-ollama pull gemma4:12b
+```
+case telemetry (Parquet: logs, traces, metrics)
+   │
+   ├─ survey (code): every service, the calls between them, entry services,
+   │                 network connections; a hint, never a limit
+   ▼
+lead agent: investigates with read-only SQL and drafts an answer
+   │
+   ├─ kind check, one subagent per drafted fault, each in a fresh context:
+   │     tries to disprove the fault's kind, given a call table computed by code
+   │     (latency percentiles, errors, the called service's own time, whether
+   │     each end is still alive) and the measured signatures of each fault kind
+   ▼
+lead agent: weighs the verdicts and writes the final answer
+   (faulty services, fault kinds, propagation path; schema-checked JSON)
 ```
 
-### With Docker Compose
+All agents run on Claude Haiku 5.5. The tools are read-only.
 
-```powershell
-docker compose up --build
+Most of the gain comes from the kind check. On the held-out cases, the lead's drafts were right in 198. The check fixed 60 of the rest and broke 13, ending at 245. Both agents nearly always named a right service (94% and 98% of cases). Where the service was right, the standard agent named the right kind of fault 61% of the time and FlowGuard 76%.
+
+## Results
+
+| System | Cases | Standard agent | FlowGuard | FlowGuard won | FlowGuard lost |
+|---|---|---|---|---|---|
+| TrainTicket | 215 | 73 (34.0%) | **122 (56.7%)** | 58 | 9 |
+| OpenTelemetry Demo | 25 | 12 (48.0%) | **20 (80.0%)** | 9 | 1 |
+| Hotel Reservation | 115 | 101 (87.8%) | 103 (89.6%) | 10 | 8 |
+| **All** | **355** | **186 (52.4%)** | **245 (69.0%)** | **77** | **18** |
+
+- **The gain** is 16.6 points, with a 95% interval of 11.5 to 21.7.
+- **The development cases predicted it:** 71% on development, 69.0% held out, so the choices made on the 100 development cases did not overfit them.
+- **Under the public scorer's stricter rule**, where every injected fault must be named, including those the labels mark optional, FlowGuard scores 41.1% against 31.3%.
+
+**What it does not show**
+
+- **It is not a leaderboard result.** The published rows were measured on an older, 500-case version of the data with other labels and larger models. The best row is 46.4%, with Claude Opus 5. A claim there needs a submission under the leaderboard's rules, and there is no public route for one.
+- **One run of each agent, on one model.**
+- **Hotel Reservation shows no gain**, at 1.6 times the cost.
+- **TrainTicket is still at 57%.** Network faults to the database read as database faults, and HTTP faults read as network faults.
+- **Every case is an injected fault in a test system.** Finding the cause of real production incidents, the project's objective, is not yet demonstrated.
+
+## Running it
+
+You need Python 3.11 or later. The agents need an Anthropic API key in `ANTHROPIC_API_KEY`.
+
+```bash
+pip install -e ".[openrca2,claude,dev]" huggingface_hub
+
+# The dataset at the commit used here (2.9 GB), checked file by file
+hf download anon-ops/ops-lite --repo-type dataset \
+    --revision 581eba39d0bfd2d397eded6cd7cbe3303255521a \
+    --local-dir data/external/openrca2/raw
+python -m flowguard.openrca2.download --raw data/external/openrca2/raw
+
+# Separate the answers from the telemetry, rename the cases, draw the split (seed 20261112)
+python -m flowguard.openrca2.prepare --root data/external/openrca2
+
+# FlowGuard on the 100 development cases, stopping at $6
+python -m flowguard.openrca2.baseline --root data/external/openrca2 \
+    --provider claude --model claude-haiku-5-5 --agent lead+survey+kind2 \
+    --sample 100 --max-usd 6 --out reports/my-dev-run
 ```
 
-This starts the API and a Qdrant server, and uses the Ollama already on your computer. `docker compose --profile ollama up --build` runs Ollama in a container instead. Check it's ready:
+`--agent standard` runs the benchmark's standard agent instead. The held-out test answers every held-out case without reading any answer (`--held-out`, split across terminals with `--shard k/n`), then scores both runs once:
 
-```powershell
-Invoke-RestMethod http://localhost:8000/health/ready
+```bash
+python -m flowguard.openrca2.final --root data/external/openrca2 \
+    --standard <standard run> --design <FlowGuard run> --out compared.md
 ```
 
-### Without Docker
-
-Python 3.11 or later:
-
-```powershell
-pip install -e ".[dev]"
-uvicorn flowguard.api.app:app
-```
-
-The document index stays in memory and is rebuilt at each start. Settings are in [`.env.example`](.env.example); every one has a default.
-
-## Demo
-
-With the API running:
-
-```powershell
-python -m flowguard.demo                         # investigate INC-001, stop for approval
-python -m flowguard.demo --approve               # ...and approve the plan
-python -m flowguard.demo --incident INC-003 --reject "Wait for the carrier"
-```
-
-The demo checks readiness, starts an investigation, shows the plan with what needs approval, records the decision, and prints the readable report and the audit trail. [`examples/requests.http`](examples/requests.http) has a request for every route, to send from VS Code's REST Client.
-
-## API
-
-| Route | |
-|---|---|
-| `GET /health` | The process is running |
-| `GET /health/ready` | The index, the model, and the audit store can all serve |
-| `POST /investigations` | Investigate an incident. Answers 201 with the record, or 422 for an invalid request, which is still audited |
-| `GET /investigations/{id}` | The latest record |
-| `GET /investigations/{id}/report` | The latest record as a readable Markdown report |
-| `GET /investigations/{id}/events` | Every saved version of the record |
-| `POST /investigations/{id}/approve` | Approve a plan that's waiting |
-| `POST /investigations/{id}/reject` | Decline it, with a reason |
-| `POST /investigations/{id}/request-more-evidence` | Send it back once, with what to look for |
-
-## How it stays safe
-
-- **The model proposes, code decides.** Gemma says what failed and which change explains it, and suggests steps. Code decides by fixed rules whether to accept the diagnosis or abstain, attaches each step's risk, rollback, and approval requirement, and validates the plan.
-- **Only catalogued actions.** A step must be one of 11 actions, target a service or deployment in the evidence, cite evidence, and come in a safe order. A replay can't run before a fix.
-- **Every state change waits for a person.** The graph pauses, the pause survives restarts, and only an explicit, named decision resumes it. Nothing times out into approval.
-- **Read-only, allowlisted tools.** The model never calls tools. Each of the 10 MCP tools has a call limit, and a write tool can't be declared without requiring approval.
-- **Untrusted text stays data.** Evidence is fenced off in the prompt, and fence tags inside it are removed. Credentials are redacted wherever text enters.
-- **Everything is audited.** Each stage saves a new version of the record. Versions can't be changed or saved twice, and the investigation fails if its record can't be saved.
-
-The full list, with the test for each threat, is in [the threat model](docs/threat-model.md).
-
-## Tests and evaluation
-
-```powershell
-ruff check . ; ruff format --check . ; mypy src
-pytest                                          # about 550 tests, no model needed
-pytest -m llm                                   # 2 tests against the real model
-python -m flowguard.evaluation.investigations   # the five tuning incidents with Gemma, about 6 minutes
-```
-
-The benchmark's commands, which take hours, are in [`docs/evaluation.md`](docs/evaluation.md#reproducing).
-
-CI runs the checks and builds the Docker image on every push. [`tests/unit/test_safety.py`](tests/unit/test_safety.py) covers each threat in the brief with a model that obeys injected instructions, to show the controls don't depend on the model behaving.
+The tests need no data or model: `pytest`.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md): the components, the investigation graph, and the main design decisions.
-- [Threat model](docs/threat-model.md): what could go wrong, what stops it, the test that proves it, and the risks that remain.
-- [Evaluation](docs/evaluation.md): the method, the metrics, both sets of results, and their limits.
-- [Connectors](docs/connectors.md): the contract a connector to a real system must meet, and the connectors wanted.
-- [`brief.md`](brief.md): the original design brief, with dated notes where the build changed course.
-- [`CHANGELOG.md`](CHANGELOG.md): what changed, step by step.
+| | |
+|---|---|
+| [`docs/openrca2-results.md`](docs/openrca2-results.md) | The held-out result and its limits |
+| [`docs/openrca2-design.md`](docs/openrca2-design.md) | The design, every measurement and decision in order, and the budget |
+| [`docs/openrca2-task.md`](docs/openrca2-task.md) | The task, the scoring and the leaderboard |
+| [`docs/openrca2-data.md`](docs/openrca2-data.md) | The study of the development cases |
+| [`docs/openrca2-baseline.md`](docs/openrca2-baseline.md) | The standard agent, rebuilt, and how it differs from the published runs |
+| [`docs/flowguard-copilot.md`](docs/flowguard-copilot.md), [`docs/project-report.md`](docs/project-report.md) | Stage 1: the copilot and its synthetic benchmarks |
+| [`brief.md`](brief.md), [`CHANGELOG.md`](CHANGELOG.md) | The full working record |
 
 ## Project layout
 
 ```
-src/flowguard/
-  api/          FastAPI app and routes
-  graph/        LangGraph state, nodes, routing, checkpoints
-  domain/       Models and rules: incidents, evidence, confidence, remediation, validation, redaction
-  mcp/          MCP servers (observability, operations, knowledge), tool guard, client adapter
-  rag/          Chunking, embedding, ingestion, retrieval
-  llm/          Ollama client, and a Claude client for comparing models
-  storage/      Append-only audit store
-  evaluation/   Retrieval and investigation evaluations
-  benchmark/    The benchmark's scenario families, generator, and checker
-data/           Eight seeded incidents: logs, deployments, alerts, metrics, maps, documents, ground truth
-data/benchmark/ The generated benchmark: 305 incidents
-data/benchmark-2031/  The newer benchmark: 50 development and 300 test incidents (the test incidents are spent)
-reports/        Evaluation results; the benchmark's are in reports/benchmark/
+src/flowguard/openrca2/   stage 2: the agents, tools, survey, scorer, runners
+  design.py, subagents.py   the lead agent and the kind check
+  survey.py                 the code survey and the call table
+  baseline.py, final.py     development runs, the held-out test and its scoring
+  score.py, failures.py     the scorer and the comparison of runs
+src/flowguard/            stage 1: the copilot (graph, MCP tools, retrieval, API)
+tests/                    unit tests for both stages
+reports/                  every run, case by case
 ```
-
-## Contributing
-
-FlowGuard reads synthetic incidents today. The most useful next step is connectors to real systems, such as Loki, Prometheus, and GitHub, so it can investigate real incidents. [docs/connectors.md](docs/connectors.md) describes what a connector must do, and [CONTRIBUTING.md](CONTRIBUTING.md) explains how to send one.
 
 ## Licence
 
-[Apache License 2.0](LICENSE).
+[Apache 2.0](LICENSE).
