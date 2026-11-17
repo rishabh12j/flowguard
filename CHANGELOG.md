@@ -281,3 +281,6 @@
 - Measured the kind check's third version: 71 exact (Hotel Reservation 29, OTel Demo 3, TrainTicket 39). It fixed the HTTP-against-network confusion (15 of 16 HTTP cases right, from 9) but misses its keep rule and the check before the held-out test; three versions of the check scored 72, 71 and 71, indistinguishable case by case.
 
 - The user chose the kind check's second version (`lead+survey+kind2`) for the held-out test, the only configuration to pass the check before it.
+
+- Ran the held-out test once, blind: the final design (`lead+survey+kind2`) made 245 exact matches on the 355 held-out cases against 186 for the standard agent on the same model (77 won, 18 lost, p = 7 × 10⁻¹⁰), so the agreed bar is met. Results in `docs/openrca2-results.md`; the held-out cases are spent.
+- The final scoring step now also scores every answer under the public scorer's rule, that every injected fault is required (`scores_public`), and reports it in a second table; scores already saved are not recomputed.

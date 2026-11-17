@@ -314,7 +314,7 @@ Unchanged from "Decided by the user, 2026-11-13": on the development cases, the 
 | Reserve: one repair run, or overruns | $28 |
 | **Total** | **$100** |
 
-Spent since 2026-11-13, when the limit was set: $24.18 (kind check smoke test $0.04, spread check smoke test $0.04, kind check 100 cases $5.10, standard agent on the fixed tool $3.18 from the reserve, spread check 100 cases $6.36, second kind check smoke test $0.03, second kind check 100 cases $4.57, third kind check 100 cases $4.86). Each run's `--max-usd` is set to its line here.
+Spent since 2026-11-13, when the limit was set: $51.79 (kind check smoke test $0.04, spread check smoke test $0.04, kind check 100 cases $5.10, standard agent on the fixed tool $3.18 from the reserve, spread check 100 cases $6.36, second kind check smoke test $0.03, second kind check 100 cases $4.57, third kind check 100 cases $4.86, held-out test $27.61: the standard agent $10.77 and the design $16.84). Each run's `--max-usd` is set to its line here.
 
 ### Schedule
 
@@ -680,3 +680,13 @@ The final configuration is `--agent lead+survey+kind2`: the only one to pass the
 | **Caps in all** | | | **$36**, within the $40 set aside | about $28 |
 
 Each terminal counts what its folder had spent when it started, so a shard started late, or a retry of failed cases, is given the folder's whole cap ($14 for the standard agent, $22 for the design) and stops when the folder reaches it.
+
+## The held-out test, 2026-11-16: the bar is met
+
+Run a day early, once. The design (`lead+survey+kind2`) made 245 exact matches on the 355 held-out cases against 186 for the standard agent, both on Claude Haiku 5.5: 69.0% against 52.4%. Case by case it won 77 and lost 18 (paired sign test p = 7 × 10⁻¹⁰), a gain of 16.6 points (95% interval 11.5 to 21.7). By system: Hotel Reservation 103 against 101 of 115 (no difference), OTel Demo 20 against 12 of 25, TrainTicket 122 against 73 of 215. No case failed in either run. Cost $27.61 ($10.77 and $16.84).
+
+The kind check took the lead's drafts from 198 right to 245 (60 fixed, 13 broken). The development cases predicted the result: 71% there, 69.0% here.
+
+The full result, what it shows and what it does not: `docs/openrca2-results.md`. The held-out cases are spent.
+
+The scoring step also scores each answer under the public scorer's rule (every injected fault required, `scores_public`), as the bars ask, without recomputing the scores already saved. Under that rule the design made 146 exact matches against 111 (51 won, 16 lost, p = 2 × 10⁻⁵); the bar is judged on the labels' roles.

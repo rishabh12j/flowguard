@@ -121,6 +121,31 @@ def test_a_run_is_scored_once_from_its_saved_answers_and_drafts(root: Path) -> N
     assert score_run(root, run) == 0
 
 
+def test_the_public_rule_requires_every_injected_fault(root: Path) -> None:
+    # case-007 has one required fault and one optional one; the answer names the first.
+    write_case(
+        root / "answers",
+        "held-out",
+        "case-007",
+        [fault("a", "PodKill"), fault("c", "PodKill", role="optional")],
+        [],
+        [],
+    )
+    run = save(root / "design", [record("case-007", "ts", RIGHT)])
+    assert score_run(root, run) == 1
+    done = load_run(run)["case-007"]
+    assert (done["scores"]["acc"], done["scores_public"]["acc"]) == (1, 0)
+    # A record scored before the public rule existed gains it, and keeps its scores.
+    path = run / "case-007.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    del old["scores_public"]
+    old["scores"]["acc"] = 0.5  # a marker: the saved scores must not be recomputed
+    path.write_text(json.dumps(old), encoding="utf-8")
+    assert score_run(root, run) == 1
+    again = load_run(run)["case-007"]
+    assert (again["scores"]["acc"], again["scores_public"]["acc"]) == (0.5, 0)
+
+
 def test_only_held_out_runs_are_scored_here(root: Path) -> None:
     dev = record("case-002", "hs", RIGHT) | {"split": "dev"}
     with pytest.raises(SystemExit, match="not from a held-out run"):
@@ -148,5 +173,7 @@ def test_the_comparison_counts_a_missing_case_as_wrong_and_applies_the_bar(
     assert "| ts | 2 | 0 | 2 |" in text
     assert "| all | 4 | 0 | 4 |" in text
     assert "in 4 cases, and wrong where it is right in 0: p = 0.1250" in text
+    assert "## Under the public scorer's rule" in text
+    assert "Case by case under this rule: 4 won, 0 lost" in text
     # Four cases cannot reach p < 0.05.
     assert "**not met**" in text
