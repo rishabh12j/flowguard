@@ -286,3 +286,4 @@
 - The final scoring step now also scores every answer under the public scorer's rule, that every injected fault is required (`scores_public`), and reports it in a second table; scores already saved are not recomputed.
 
 - Rewrote the README as the project's front page: the copilot on synthetic incidents, the failed check on real logs, the restart against OpenRCA 2.0, and the held-out result with its limits. The copilot's former README is now `docs/flowguard-copilot.md`.
+- Recast the README in the form of the OpenRCA 2.0 paper: abstract, introduction with contributions, method, experiments (development ablation, held-out results in the paper's metrics, failure modes, cost), related work and project history, threats to validity, conclusion, references, and reproduction steps.
