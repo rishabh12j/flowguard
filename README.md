@@ -4,7 +4,7 @@
 
 ## Abstract
 
-Root cause analysis (RCA) asks an agent to find, from a failing system's telemetry, which component broke, how it broke, and how the failure spread. FlowGuard began as an incident-response copilot evaluated on synthetic incidents. There it diagnosed 82 to 86% of held-out incidents, but on real microservice logs it named the faulty service in only 33 of 60 cases, below a guess-the-most-common-service baseline. We therefore rebuilt it for OpenRCA 2.0 [1], a cross-system benchmark of faults injected into running microservice systems. A study of the benchmark's standard agent on development cases showed where it fails: it nearly always reaches a faulty service, and most of its misses name the wrong *kind* of fault. FlowGuard targets that gap. Code surveys the telemetry, a lead agent drafts a diagnosis, and for each drafted fault a subagent in a fresh context tries to disprove its kind. The subagent works from a table of the service's calls computed by code and from fault signatures measured on development cases. Every part was developed on 100 cases and kept only if it cleared a bar fixed in advance. On the other 355 cases, run once and blind, FlowGuard on Claude Haiku 5.5 reaches 69.0% exact match against 52.4% for the standard agent on the same model: 77 cases won and 18 lost (paired sign test p ≈ 7 × 10⁻¹⁰), at 4.7 cents a case.
+Root cause analysis (RCA) asks an agent to find, from a failing system's telemetry, which component broke, how it broke, and how the failure spread. FlowGuard began as an incident-response copilot evaluated on synthetic incidents. There it diagnosed 82 to 86% of held-out incidents, but on real microservice logs it named the faulty service in only 33 of 60 cases, below a guess-the-most-common-service baseline. We therefore rebuilt it for OpenRCA 2.0 [1], a cross-system benchmark of faults injected into running microservice systems. A study of the benchmark's standard agent on development cases showed where it fails: it nearly always reaches a faulty service, and most of its misses name the wrong *kind* of fault. FlowGuard targets that gap. Code surveys the telemetry, a lead agent drafts a diagnosis, and for each drafted fault a subagent in a fresh context tries to disprove its kind. The subagent works from a table of the service's calls computed by code and from fault signatures measured on development cases. Every part was developed on 100 cases and kept only if it cleared a bar fixed in advance. On the other 355 cases, run once and blind, FlowGuard on Claude Haiku 5.5 reaches 69.0% exact match against 52.4% for the standard agent on the same model: 77 cases won and 18 lost (paired sign test p ≈ 7 × 10⁻¹⁰), at 1.6 times the standard agent's cost per case.
 
 ## 1 Introduction
 
@@ -77,7 +77,7 @@ case telemetry (Parquet: logs, traces, metrics)
 
 **Baseline.** The standard agent is the benchmark's reference agent [1]: a single model in a ReAct-style loop [4], adapted from the Deep Research agent [5], with tools to list tables, read a table's layout, run SQL and keep notes, and up to 100 tool calls. We rebuilt it from the paper's prompts and a co-author's public tools [7]. Both agents use the same model, tools and answer schema.
 
-**Model.** Claude Haiku 5.5 throughout, chosen for cost. A local `gpt-oss:20b` was ten times slower and weaker. Claude Sonnet 5.5 was estimated at $1 to $3 a case.
+**Model.** Claude Haiku 5.5 throughout, the smallest current Claude model, chosen for cost. A local `gpt-oss:20b` was ten times slower and weaker; larger Claude models were not used.
 
 **Protocol.** Development went one part at a time. Before each run, a keep rule was fixed: at least 8 more exact matches than the configuration the part was added to, and no system worse by more than 2. Before the held-out test, a per-system check required the final configuration to be within 2 exact matches of the standard agent's runs on every system. The held-out bar was also fixed in advance: more exact matches than the standard agent, with an exact paired sign test p < 0.05. In the final test, both agents answered all 355 held-out cases before any answer was read. A separate step then scored both runs once.
 
@@ -85,17 +85,17 @@ case telemetry (Parquet: logs, traces, metrics)
 
 ### 3.2 Development
 
-| Configuration, 100 development cases | Hotel Res. (33) | OTel Demo (7) | TrainTicket (60) | **All** | Cost a case | Kept |
-|---|---|---|---|---|---|---|
-| Standard agent, run 1 | 31 | 5 | 20 | 56 | 3.0¢ | Baseline |
-| Standard agent, run 2 | 32 | 7 | 17 | 56 | 3.2¢ | Baseline |
-| Standard agent, run 3 (fixed tool) | 30 | 4 | 20 | 54 | 3.2¢ | Baseline |
-| Lead agent | 22 | 4 | 24 | 50 | 5.1¢ | As base |
-| + survey | 28 | 4 | 30 | 62 | 3.5¢ | Yes |
-| + kind check | 25 | 4 | 43 | 72 | 5.1¢ | Yes |
-| + kind check + spread check | 27 | 5 | 34 | 66 | 6.4¢ | No |
-| + kind check, v2 (Table 1 signatures, call table) | 31 | 6 | 34 | **71** | 4.6¢ | **Final** |
-| + kind check, v3 (adds HTTP signatures) | 29 | 3 | 39 | 71 | 4.9¢ | No |
+| Configuration, 100 development cases | Hotel Res. (33) | OTel Demo (7) | TrainTicket (60) | **All** | Kept |
+|---|---|---|---|---|---|
+| Standard agent, run 1 | 31 | 5 | 20 | 56 | Baseline |
+| Standard agent, run 2 | 32 | 7 | 17 | 56 | Baseline |
+| Standard agent, run 3 (fixed tool) | 30 | 4 | 20 | 54 | Baseline |
+| Lead agent | 22 | 4 | 24 | 50 | As base |
+| + survey | 28 | 4 | 30 | 62 | Yes |
+| + kind check | 25 | 4 | 43 | 72 | Yes |
+| + kind check + spread check | 27 | 5 | 34 | 66 | No |
+| + kind check, v2 (Table 1 signatures, call table) | 31 | 6 | 34 | **71** | **Final** |
+| + kind check, v3 (adds HTTP signatures) | 29 | 3 | 39 | 71 | No |
 
 *Table 2: Every configuration measured during development. Runs 1 and 2, and the configurations up to the kind check, used a tool with a time-zone fault, fixed before run 3.*
 
@@ -149,15 +149,15 @@ case telemetry (Parquet: logs, traces, metrics)
 
 Wrong kind remains the largest class. From the development cases, three confusions dominate. First, a network fault on the link to MySQL is drafted as a slow or failed database call; the check found the right kind with the right evidence, and the lead sometimes kept its draft anyway. Second, HTTP faults are read as network faults. Third, packet loss and corruption are confused, and they leave the same signature. Why the lead overrode correct verdicts is not known: its reasoning is not visible in the transcripts.
 
-### 3.5 Cost
+### 3.5 Cost and time
 
 | Per case, held-out | Standard agent | FlowGuard |
 |---|---|---|
-| Cost | 3.0 cents | 4.7 cents |
+| Model cost, relative | 1.0 | 1.6 |
 | Time | 1.3 min | 2.2 min |
 | Tool calls | 28.6 | 20.4 |
 
-FlowGuard costs 1.6 times as much for 1.3 times the exact matches. The final test cost $27.61 for both agents together.
+FlowGuard costs 1.6 times as much as the standard agent and takes 1.8 times as long, for 1.3 times the exact matches.
 
 ## 4 Related Work and Project History
 
@@ -231,7 +231,7 @@ python -m flowguard.openrca2.download --raw data/external/openrca2/raw
 # Move the answers out of the case folders, rename the cases, draw the split
 python -m flowguard.openrca2.prepare --root data/external/openrca2
 
-# FlowGuard on the 100 development cases, stopping at $6
+# FlowGuard on the 100 development cases (--max-usd is a required spending cap)
 python -m flowguard.openrca2.baseline --root data/external/openrca2 \
     --provider claude --model claude-haiku-5-5 --agent lead+survey+kind2 \
     --sample 100 --max-usd 6 --out reports/my-dev-run
@@ -254,7 +254,7 @@ Every run in this README is kept case by case in [`reports/`](reports/), with ea
 | Document | Contents |
 |---|---|
 | [`docs/openrca2-results.md`](docs/openrca2-results.md) | The held-out result in full |
-| [`docs/openrca2-design.md`](docs/openrca2-design.md) | The design, every measurement and decision in order, and the budget |
+| [`docs/openrca2-design.md`](docs/openrca2-design.md) | The design, and every measurement and decision in order |
 | [`docs/openrca2-task.md`](docs/openrca2-task.md) | The task, the scoring and the leaderboard |
 | [`docs/openrca2-data.md`](docs/openrca2-data.md) | The study of the development cases |
 | [`docs/openrca2-baseline.md`](docs/openrca2-baseline.md) | The rebuilt standard agent and its known differences |

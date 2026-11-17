@@ -287,3 +287,4 @@
 
 - Rewrote the README as the project's front page: the copilot on synthetic incidents, the failed check on real logs, the restart against OpenRCA 2.0, and the held-out result with its limits. The copilot's former README is now `docs/flowguard-copilot.md`.
 - Recast the README in the form of the OpenRCA 2.0 paper: abstract, introduction with contributions, method, experiments (development ablation, held-out results in the paper's metrics, failure modes, cost), related work and project history, threats to validity, conclusion, references, and reproduction steps.
+- The README gives cost only relative to the standard agent (1.6 times), with time and tool calls; dollar figures stay in the working record. Removed six untracked early run folders (smoke tests, a probe capture, a speed test); kept the local gpt-oss baseline run as the evidence for the README's model choice.
